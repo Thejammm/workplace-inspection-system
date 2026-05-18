@@ -468,7 +468,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="inspectionDetailsCard">
       <div class="card-band">
         <h3><span class="dot">●</span> Inspection Details</h3>
         <span class="badge badge-accent" id="draftBadge" style="display:none">Draft</span>
@@ -528,7 +528,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       </div>
     </div>
     <div id="checklistContainer"></div>
-    <div class="card">
+    <div class="card" id="generalNotesCard">
       <div class="card-band"><h3><span class="dot">●</span> General Notes</h3></div>
       <div class="card-body">
         <div class="field-group">
@@ -2067,9 +2067,23 @@ function renderActiveInspectionBody(){
   } else {
     renderChecklist();
   }
-  // Show the "Submit & Save PDF" button only for form-style types
+
+  // ── Hide the generic Inspection Details + General Notes cards for form-style ──
+  //    Forms capture their own structured fields; the generic period/title/location
+  //    fields don't apply and would just be friction for the user.
+  const detailsCard = document.getElementById('inspectionDetailsCard');
+  const notesCard   = document.getElementById('generalNotesCard');
+  if(detailsCard) detailsCard.style.display = isForm ? 'none' : '';
+  if(notesCard)   notesCard.style.display   = isForm ? 'none' : '';
+
+  // Show the "Submit & Save PDF" button only for form-style types.
+  // Hide the "New Period" button for form-style (irrelevant — forms aren't periodic).
   const pdfBtn = document.getElementById('submitAndPdfBtn');
   if(pdfBtn) pdfBtn.style.display = isForm ? 'inline-flex' : 'none';
+  const submitBtn = document.querySelector('.action-bar .btn-primary[onclick="submitInspection()"]');
+  if(submitBtn) submitBtn.style.display = isForm ? 'none' : 'inline-flex';
+  const newPeriodBtn = document.querySelector('.action-bar .btn-outline[onclick="startNewDraft()"]');
+  if(newPeriodBtn) newPeriodBtn.style.display = isForm ? 'none' : 'inline-flex';
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2346,7 +2360,24 @@ function submitInspection() {
   flushDraft();
   const d=S.draft;
   const activeType = S.inspectionTypes?.[d.typeId];
-  if(!d.periodFrom||!d.periodTo||!d.manager||!d.location){ showToast('Fill in Period dates, Name and Location.','error'); return null; }
+
+  // For form-style: the generic Inspection Details card is hidden, so auto-fill
+  // sensible defaults for the period/manager/location fields. The form's own
+  // structured fields capture whatever real info matters. Multi-tenant work
+  // (next session) will pull the real user/tenant identity from the login.
+  if(activeType?.kind === 'form'){
+    const today = new Date().toISOString().split('T')[0];
+    if(!d.periodFrom) d.periodFrom = today;
+    if(!d.periodTo)   d.periodTo   = today;
+    if(!d.manager)    d.manager    = (S.branding?.name || 'Reported by user');
+    if(!d.location)   d.location   = (S.branding?.name || activeType.name);
+  } else {
+    // Checklist-style still requires these manually
+    if(!d.periodFrom||!d.periodTo||!d.manager||!d.location){
+      showToast('Fill in Period dates, Name and Location.','error');
+      return null;
+    }
+  }
 
   // ── Form-style submission ──
   if(activeType?.kind === 'form'){
