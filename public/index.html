@@ -1436,14 +1436,22 @@ const FORMS = {
     // The user attaches the just-downloaded PDF themselves.
     notify: {
       email: 'liam@egsleeds.com',
-      subjectTemplate: 'Near Miss Report — {location} — {date}',
+      subjectTemplate: 'NEAR MISS REPORT — {date}',
       bodyTemplate:
-        'A Near Miss has been reported.\n\n' +
-        '• Reported by: {manager}\n' +
-        '• Location: {location}\n' +
-        '• Date: {date}\n\n' +
-        'The PDF report has been saved to your Downloads folder. ' +
-        'Please ATTACH it to this email before sending.\n\n' +
+        '*** NEAR MISS REPORTED ***\n\n' +
+        'Submitted: {date}\n' +
+        '\n' +
+        '--- WHAT HAPPENED ---\n' +
+        '{findings}\n' +
+        '\n' +
+        '--- PHOTO ---\n' +
+        '{photoNote}\n' +
+        '\n' +
+        '------------------------------------------------------------\n' +
+        'A full PDF report has been downloaded to the reporter\'s device.\n' +
+        'Please attach it to this email before sending.\n' +
+        '------------------------------------------------------------\n' +
+        '\n' +
         '— Sent from the Archer H&S Workplace Inspection System'
     },
     sections: [
@@ -2515,14 +2523,61 @@ function submitFormAndPDF(){
   }, 200);
 }
 
-// Substitute {placeholders} in a template using the inspection record
+// Substitute {placeholders} in a template using the inspection record.
+// Supports both generic placeholders (manager/location/date/type) and any
+// form field by id (e.g. {findings}). For form-style inspections it also
+// auto-derives helpful summaries like {photoNote}.
 function _fillTemplate(tpl, insp){
-  const date = insp.periodTo ? fmtDate(insp.periodTo) : new Date().toLocaleDateString('en-GB');
-  return (tpl||'')
+  const date = insp.submittedAt
+    ? new Date(insp.submittedAt).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
+    : (insp.periodTo ? fmtDate(insp.periodTo) : new Date().toLocaleDateString('en-GB'));
+
+  let out = (tpl||'')
     .replace(/\{manager\}/g,  insp.manager  || 'Unknown')
     .replace(/\{location\}/g, insp.location || 'Unknown location')
     .replace(/\{date\}/g,     date)
     .replace(/\{type\}/g,     insp.typeName || 'Form');
+
+  // Form fields by id — {findings}, {employee_name}, etc.
+  const data = insp.formData || {};
+  const form = insp.formSnapshot;
+  if(form?.sections){
+    form.sections.forEach(sec => (sec.fields||[]).forEach(f => {
+      if(f.type === 'instruction') return;
+      let value = data[f.id];
+      if(value === undefined || value === null) value = '';
+      if(Array.isArray(value)) value = value.length ? `(${value.length} item${value.length!==1?'s':''})` : '';
+      if(typeof value !== 'string') value = String(value);
+      // For select fields, prefer the label over the raw value
+      if(f.type === 'select' && value){
+        const opt = (f.options||[]).find(o => o.value === value);
+        if(opt) value = opt.label;
+      }
+      // For signatures / photos, give a friendlier summary
+      if(f.type === 'signature' && value) value = '(signed)';
+      const re = new RegExp('\\{'+f.id.replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&')+'\\}', 'g');
+      out = out.replace(re, value);
+    }));
+  }
+
+  // {photoNote} — useful generic placeholder for forms with optional photo
+  let photoNote = '';
+  if(form?.sections){
+    const photoField = form.sections.flatMap(s=>s.fields||[]).find(f => f.type === 'photo');
+    if(photoField){
+      const v = data[photoField.id];
+      const photos = Array.isArray(v) ? v : (v ? [v] : []);
+      photoNote = photos.length
+        ? `A photo of the near miss is included in the attached PDF.`
+        : `No photo was captured at the scene.`;
+    }
+  }
+  out = out.replace(/\{photoNote\}/g, photoNote);
+
+  // Strip any unresolved {placeholders} so the user doesn't see them
+  out = out.replace(/\{[a-z_][a-z0-9_]*\}/gi, '');
+
+  return out;
 }
 
 // Open the user's default email client with subject + body prefilled
