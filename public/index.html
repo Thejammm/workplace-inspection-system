@@ -1451,7 +1451,8 @@ const FORMS = {
         id: 'main',
         name: 'Near Miss',
         fields: [
-          { id:'photo', type:'photo', label:'Take a photo of the near miss', required:true }
+          { id:'findings', type:'textarea', label:'What happened? Brief description of the near miss', required:true, placeholder:'e.g. Forklift pulled out from aisle 3 without horn — pedestrian had to step back. No injury.' },
+          { id:'photo',    type:'photo',    label:'Photo evidence (optional)' }
         ]
       }
     ]
