@@ -427,7 +427,10 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       <span class="save-indicator" id="saveIndicator"></span>
       <button class="btn btn-ghost btn-sm no-print" onclick="changeSaveFolder()" title="Set a folder to save PDF reports directly to" style="color:var(--text-muted);border-color:var(--border);">📁 Save Folder</button>
       <button class="btn btn-ghost btn-sm no-print" onclick="resetAppData()" title="Clear all data and start fresh — useful for testing" style="color:var(--text-muted);border-color:var(--border);">🔄 Reset</button>
-      <button class="btn btn-outline btn-sm no-print" onclick="saveAs()">💾 Save As</button>
+      <!-- Save As button removed: server-stored data makes this redundant AND it could let users download the whole app. -->
+      <!-- <button class="btn btn-outline btn-sm no-print" onclick="saveAs()">💾 Save As</button> -->
+      <!-- Ctrl+S keyboard shortcut for saveAs() is disabled below too -->
+
     </div>
   </div>
 </header>
@@ -1675,7 +1678,8 @@ document.addEventListener('DOMContentLoaded', () => {
   restorePersistedSaveFolder();
   setInterval(saveData, 30000);
 });
-document.addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveAs();} });
+// Ctrl+S shortcut removed — saveAs() would let users download the whole app HTML with embedded data.
+// document.addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveAs();} });
 
 function setDefaultDates() {
   const today = new Date();
