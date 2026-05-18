@@ -1446,10 +1446,10 @@ const FORMS = {
         '\n' +
         '--- PHOTO ---\n' +
         '{photoNote}\n' +
-        '\n' +
+        '\n\n\n' +
         '------------------------------------------------------------\n' +
-        'A full PDF report has been downloaded to the reporter\'s device.\n' +
-        'Please attach it to this email before sending.\n' +
+        'A full PDF report has also been downloaded to the reporter\'s device\n' +
+        'and can be attached to this email if a more formal record is needed.\n' +
         '------------------------------------------------------------\n' +
         '\n' +
         '— Sent from the Archer H&S Workplace Inspection System'
@@ -2560,7 +2560,9 @@ function _fillTemplate(tpl, insp){
     }));
   }
 
-  // {photoNote} — useful generic placeholder for forms with optional photo
+  // {photoNote} — guidance message for forms with an optional photo field.
+  // When a photo was captured we copy it to the user's clipboard before
+  // opening the email (see _openNotifyEmail), and tell them to paste it here.
   let photoNote = '';
   if(form?.sections){
     const photoField = form.sections.flatMap(s=>s.fields||[]).find(f => f.type === 'photo');
@@ -2568,8 +2570,8 @@ function _fillTemplate(tpl, insp){
       const v = data[photoField.id];
       const photos = Array.isArray(v) ? v : (v ? [v] : []);
       photoNote = photos.length
-        ? `A photo of the near miss is included in the attached PDF.`
-        : `No photo was captured at the scene.`;
+        ? '[The photo has been copied to your clipboard.\n Click on the line below and press Ctrl+V (or Cmd+V on Mac) to paste it into the email.]\n'
+        : 'No photo was captured at the scene.';
     }
   }
   out = out.replace(/\{photoNote\}/g, photoNote);
@@ -2581,15 +2583,72 @@ function _fillTemplate(tpl, insp){
 }
 
 // Open the user's default email client with subject + body prefilled
-function _openNotifyEmail(insp, notify){
+async function _openNotifyEmail(insp, notify){
   const subject = _fillTemplate(notify.subjectTemplate || 'Notification', insp);
   const body    = _fillTemplate(notify.bodyTemplate    || '',             insp);
+
+  // ── If the form has a photo, copy it to the clipboard first so the user
+  //    can paste it directly into the email body with Ctrl+V (or Cmd+V on Mac).
+  //    mailto: itself cannot carry attachments — this is the closest browser
+  //    capability to "image in the email body".
+  let photoCopied = false;
+  try {
+    const photoDataUrl = _firstPhotoFromForm(insp);
+    if(photoDataUrl){
+      const blob = await fetch(photoDataUrl).then(r => r.blob());
+      // ClipboardItem accepts only specific MIME types; image/png is universally supported
+      const pngBlob = blob.type === 'image/png' ? blob : await _convertBlobToPng(blob);
+      const item = new ClipboardItem({ 'image/png': pngBlob });
+      await navigator.clipboard.write([item]);
+      photoCopied = true;
+    }
+  } catch(err){
+    console.warn('Could not copy photo to clipboard:', err);
+    // Non-fatal — continue with email open even if clipboard copy fails
+  }
+
   const mailto  = `mailto:${encodeURIComponent(notify.email)}`
                 + `?subject=${encodeURIComponent(subject)}`
                 + `&body=${encodeURIComponent(body)}`;
-  // Use window.location so the browser handles the protocol handler properly
   window.location.href = mailto;
-  showToast(`📧 Email opened to ${notify.email} — attach the PDF that just downloaded`, 'info');
+
+  if(photoCopied){
+    showToast(`📧 Email opened — click in the body and press Ctrl+V to paste the photo`, 'info');
+  } else {
+    showToast(`📧 Email opened to ${notify.email} — attach the PDF that just downloaded`, 'info');
+  }
+}
+
+// Return the first photo data URL from any 'photo' field in the form, or null
+function _firstPhotoFromForm(insp){
+  const data = insp.formData || {};
+  const sections = insp.formSnapshot?.sections || [];
+  for(const sec of sections){
+    for(const f of (sec.fields || [])){
+      if(f.type !== 'photo') continue;
+      const v = data[f.id];
+      if(!v) continue;
+      if(Array.isArray(v)) { if(v.length) return v[0]; }
+      else if(typeof v === 'string') return v;
+    }
+  }
+  return null;
+}
+
+// Convert any image blob to PNG via canvas (some email clients only accept PNG inline)
+function _convertBlobToPng(blob){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('canvas.toBlob returned null')), 'image/png');
+    };
+    img.onerror = () => reject(new Error('Image failed to load for PNG conversion'));
+    img.src = URL.createObjectURL(blob);
+  });
 }
 
 function startNewDraft() {
