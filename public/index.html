@@ -425,7 +425,8 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     </div>
     <div class="header-right">
       <span class="save-indicator" id="saveIndicator"></span>
-      <button class="btn btn-ghost btn-sm no-print" onclick="changeSaveFolder()" title="Set a folder to save PDF reports directly to" style="color:var(--text-muted);border-color:var(--border);">📁 Save Folder</button>
+      <!-- Save Folder button removed: PDFs now go straight to the browser's Downloads folder. -->
+      <!-- <button class="btn btn-ghost btn-sm no-print" onclick="changeSaveFolder()" ...>📁 Save Folder</button> -->
       <button class="btn btn-ghost btn-sm no-print" onclick="resetAppData()" title="Clear all data and start fresh — useful for testing" style="color:var(--text-muted);border-color:var(--border);">🔄 Reset</button>
       <!-- Save As button removed: server-stored data makes this redundant AND it could let users download the whole app. -->
       <!-- <button class="btn btn-outline btn-sm no-print" onclick="saveAs()">💾 Save As</button> -->
@@ -1430,14 +1431,27 @@ const FORMS = {
     id: 'near_miss',
     name: 'Near Miss Reporting',
     icon: '⚠️',
+    // Post-submit hook: after the form is saved + PDF generated,
+    // open the user's email client pre-addressed to liam@egsleeds.com.
+    // The user attaches the just-downloaded PDF themselves.
+    notify: {
+      email: 'liam@egsleeds.com',
+      subjectTemplate: 'Near Miss Report — {location} — {date}',
+      bodyTemplate:
+        'A Near Miss has been reported.\n\n' +
+        '• Reported by: {manager}\n' +
+        '• Location: {location}\n' +
+        '• Date: {date}\n\n' +
+        'The PDF report has been saved to your Downloads folder. ' +
+        'Please ATTACH it to this email before sending.\n\n' +
+        '— Sent from the Archer H&S Workplace Inspection System'
+    },
     sections: [
       {
         id: 'main',
         name: 'Near Miss',
         fields: [
-          { id:'conducted_on', type:'datetime', label:'Conducted on' },
-          { id:'findings',     type:'textarea', label:'Take photo and brief description of findings', required:true, placeholder:'What happened? Location? Anyone involved?' },
-          { id:'photo',        type:'photo',    label:'Photo evidence', showIf:{field:'findings', notBlank:true} }
+          { id:'photo', type:'photo', label:'Take a photo of the near miss', required:true }
         ]
       }
     ]
@@ -1674,8 +1688,8 @@ document.addEventListener('DOMContentLoaded', () => {
   renderMyChecklist();
   renderTemplates();
   populateBrandingForm();
-  // Restore previously chosen PDF save folder (persisted in IndexedDB)
-  restorePersistedSaveFolder();
+  // PDF save folder picker has been removed — downloads go straight to the
+  // browser's Downloads folder now. restorePersistedSaveFolder() is no longer called.
   setInterval(saveData, 30000);
 });
 // Ctrl+S shortcut removed — saveAs() would let users download the whole app HTML with embedded data.
@@ -2450,15 +2464,45 @@ function submitFormAndPDF(){
   }
   const insp = submitInspection();
   if(!insp) return; // validation failed; user already informed
-  // Defer slightly so the submit toast doesn't get covered by the folder picker modal
+
+  // 1) Generate the PDF (this triggers the browser download)
   setTimeout(()=>{
     try {
       generateSingleFormPDF(insp);
     } catch(err){
       console.error('Single-form PDF generation failed:', err);
       showToast('PDF generation failed — check console for details. Submission was saved.','error');
+      return;
+    }
+    // 2) If the form has a 'notify' hook, open the user's email client
+    //    pre-addressed with subject + body. They attach the PDF manually.
+    const form = FORMS[insp.typeId];
+    if(form?.notify?.email){
+      setTimeout(() => _openNotifyEmail(insp, form.notify), 600);
     }
   }, 200);
+}
+
+// Substitute {placeholders} in a template using the inspection record
+function _fillTemplate(tpl, insp){
+  const date = insp.periodTo ? fmtDate(insp.periodTo) : new Date().toLocaleDateString('en-GB');
+  return (tpl||'')
+    .replace(/\{manager\}/g,  insp.manager  || 'Unknown')
+    .replace(/\{location\}/g, insp.location || 'Unknown location')
+    .replace(/\{date\}/g,     date)
+    .replace(/\{type\}/g,     insp.typeName || 'Form');
+}
+
+// Open the user's default email client with subject + body prefilled
+function _openNotifyEmail(insp, notify){
+  const subject = _fillTemplate(notify.subjectTemplate || 'Notification', insp);
+  const body    = _fillTemplate(notify.bodyTemplate    || '',             insp);
+  const mailto  = `mailto:${encodeURIComponent(notify.email)}`
+                + `?subject=${encodeURIComponent(subject)}`
+                + `&body=${encodeURIComponent(body)}`;
+  // Use window.location so the browser handles the protocol handler properly
+  window.location.href = mailto;
+  showToast(`📧 Email opened to ${notify.email} — attach the PDF that just downloaded`, 'info');
 }
 
 function startNewDraft() {
@@ -5583,36 +5627,26 @@ function _updateSaveFolderIndicator(state){
 }
 
 // Entry point called from PDF generators
+// Simplified PDF save — always uses the browser's standard download.
+// The previous File System Access folder-picker had too many edge cases
+// (permission resets, file:// restrictions, per-browser quirks). Plain
+// download to the user's Downloads folder is universal and predictable.
 async function savePdfWithFolderPicker(blob, filename) {
-  _pendingBlob     = blob;
-  _pendingFilename = filename;
-
-  // Case 1: have a live, permitted handle — save directly
-  if (_dirHandle) {
-    await _writeToFolder(_dirHandle, blob, filename);
-    return;
+  try {
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    closePdfOptions();
+    showToast(`✓ ${filename} downloaded`, 'success');
+  } catch(err){
+    console.error('PDF download failed:', err);
+    showToast('PDF download failed — check console', 'error');
   }
-
-  // Case 2: have a persisted handle that needs permission re-granted
-  if (_pendingRestoreHandle) {
-    try {
-      const perm = await _pendingRestoreHandle.requestPermission({ mode: 'readwrite' });
-      if(perm === 'granted'){
-        _dirHandle = _pendingRestoreHandle;
-        _dirName   = _pendingRestoreHandle.name;
-        _pendingRestoreHandle = null;
-        _updateSaveFolderIndicator();
-        await _writeToFolder(_dirHandle, blob, filename);
-        return;
-      }
-    } catch(e){ console.warn('Permission re-request failed:', e); }
-    // If denied, fall through to prompt for a new folder
-    _pendingRestoreHandle = null;
-    _updateSaveFolderIndicator();
-  }
-
-  // Case 3: no folder set — open the picker modal
-  _openFolderModal(false);
 }
 
 function _openFolderModal(changeMode) {
@@ -5756,6 +5790,31 @@ function resetAppData(){
     activeClient: null,
     branding:    { name:'AHS Compliance Consulting', tagline:'Health & Safety Consultancy', website:'', phone:'', email:'', primary:'#757575', accent:'#4BBFD6', textColor:'#3a3a3a', logoB64:'', logoName:'' }
   };
+
+  // ── Explicitly clear all known form fields ──
+  // populateInspectionForm / populateAuditForm only fill when a value is truthy,
+  // so empty defaults wouldn't actually overwrite old form values. Wipe them
+  // here so a Reset really does start from a fresh slate.
+  [
+    // Inspection Details
+    'inspTitle','inspType','periodFrom','periodTo','managerName','workshopLoc','inspRef','generalNotes',
+    // Monthly Report filters
+    'reportDateFrom','reportDateTo','reportLocationFilter','reportTypeFilter','reportTitleFilter','reportStatusFilter',
+    // PDF options
+    'pdfClientName','pdfPreparedBy','pdfReportRef',
+    // Audit
+    'auditDate','auditorName','auditPeriod','auditOverall','auditConsistency','auditResponse','auditTrends','auditRecs','auditSig','auditSigDate',
+    // Branding
+    'brandName','brandTagline','brandWebsite','brandPhone','brandEmail'
+  ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  // Reset frequency dropdown to its default
+  const freq = document.getElementById('inspFreq'); if(freq) freq.value = 'weekly';
+  // Hide the logo preview if it was shown
+  const logoWrap = document.getElementById('logoPreviewWrap'); if(logoWrap) logoWrap.style.display = 'none';
+  // Clear any form-style draft input values (ff- prefixed)
+  document.querySelectorAll('[id^="ff-"], [id^="adi-"], [id^="ada-"], [id^="add-"], [id^="rdi-"], [id^="rdb-"], [id^="note-"]')
+    .forEach(el => { if(el && 'value' in el) el.value = ''; });
+
   setDefaultDates();
   populateInspectionForm();
   renderInspectionTypeGrid();
@@ -5771,7 +5830,7 @@ function resetAppData(){
   populateReportLocationFilter();
   renderMonthlyReport();
   saveData();
-  showToast('✓ App reset to defaults — ready to test', 'info');
+  showToast('✓ App reset — all fields cleared, fresh slate', 'info');
 }
 
 let _toastTimer=null;
