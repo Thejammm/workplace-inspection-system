@@ -3019,6 +3019,24 @@ function deleteInspection(inspId){
   showToast('Inspection deleted','success');
 }
 
+// Generate a PDF for a single inspection (from the per-card "📄 PDF" button
+// on the Monthly Report tab). Routes to the form-style generator for form
+// submissions, otherwise calls the full checklist generator scoped to one.
+function generateSingleInspectionPDF(inspId){
+  const insp = S.inspections.find(i => i.id === inspId);
+  if(!insp){ showToast('Inspection not found','error'); return; }
+  try {
+    if(insp.kind === 'form'){
+      generateSingleFormPDF(insp);
+    } else {
+      generatePDF([insp]);
+    }
+  } catch(err){
+    console.error('PDF generation failed:', err);
+    showToast('PDF generation failed — see console','error');
+  }
+}
+
 // Render a Monthly Report card for a form-style inspection submission
 function _renderFormReportCard(insp){
   const form = insp.formSnapshot;
@@ -3036,6 +3054,10 @@ function _renderFormReportCard(insp){
       <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center;">
         <span class="badge badge-accent">${insp.typeName||'Form'}</span>
         <span class="badge badge-success">✓ Submitted</span>
+        <button class="no-print" onclick="generateSingleInspectionPDF('${insp.id}')" title="Generate PDF for this submission"
+          style="background:var(--accent);color:#fff;border:1px solid var(--accent);height:26px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;line-height:1;"
+          onmouseover="this.style.background='var(--accent-dark, var(--accent))';this.style.opacity='0.9';"
+          onmouseout="this.style.background='var(--accent)';this.style.opacity='1';">📄 PDF</button>
         <button class="no-print" onclick="deleteInspection('${insp.id}')" title="Delete this submission"
           style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:26px;height:26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;padding:0;"
           onmouseover="this.style.background='var(--danger)';this.style.color='#fff';"
@@ -3269,6 +3291,10 @@ function renderMonthlyReport(){
         <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center;">
           ${typeLabel?`<span class="badge badge-accent">${typeLabel}</span>`:''}
           ${statusBadge}
+          <button class="no-print" onclick="generateSingleInspectionPDF('${insp.id}')" title="Generate PDF for this inspection"
+            style="background:var(--accent);color:#fff;border:1px solid var(--accent);height:26px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;line-height:1;"
+            onmouseover="this.style.background='var(--accent-dark, var(--accent))';this.style.opacity='0.9';"
+            onmouseout="this.style.background='var(--accent)';this.style.opacity='1';">📄 PDF</button>
           <button class="no-print" onclick="deleteInspection('${insp.id}')" title="Delete this inspection"
             style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:26px;height:26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;padding:0;"
             onmouseover="this.style.background='var(--danger)';this.style.color='#fff';"
@@ -5205,11 +5231,14 @@ function generateSingleFormPDF(insp){
 //  jsPDF UMD · A4 portrait · 15mm margins
 //  AHS brand: primary [117,117,117] · cyan [75,191,214]
 // ══════════════════════════════════════════════════════════════
-function generatePDF(){
+function generatePDF(inspsOverride){
   flushBranding();
 
-  // ── Gather data — use currently filtered inspections ──
-  const insps = getFilteredInspections();
+  // ── Gather data — use override if supplied (per-card PDF button),
+  //    otherwise the currently filtered inspections in the Monthly Report tab.
+  const insps = Array.isArray(inspsOverride) && inspsOverride.length
+    ? inspsOverride
+    : getFilteredInspections();
   if(!insps.length){showToast('No inspections match current filters.','error');return;}
 
   // Build a period label from the actual date range of filtered inspections
