@@ -2428,7 +2428,12 @@ function submitInspection() {
       inspType:d.inspType||'',
       formData:JSON.parse(JSON.stringify(data)),
       formSnapshot:JSON.parse(JSON.stringify(form)),
-      submittedAt:new Date().toISOString()
+      submittedAt:new Date().toISOString(),
+      // ── Lifecycle ──
+      status:'open',          // 'open' until manager signs off; then 'signed_off'
+      awaitingReview:true,    // set true on submit; set false when manager has reviewed
+      signedOffBy:null,       // name of manager who signed off
+      signedOffAt:null        // ISO timestamp of sign-off
     };
     S.inspections.push(insp);
 
@@ -2461,7 +2466,12 @@ function submitInspection() {
     results:{...d.results}, notes:{...d.notes},
     actionDetails:{...d.actionDetails}, rectifyDetails:{...(d.rectifyDetails||{})},
     checklistSnapshot:JSON.parse(JSON.stringify(S.checklist)),
-    submittedAt:new Date().toISOString()
+    submittedAt:new Date().toISOString(),
+    // ── Lifecycle ──
+    status:'open',          // 'open' until manager signs off; then 'signed_off'
+    awaitingReview:true,    // set true on submit; cleared by manager
+    signedOffBy:null,
+    signedOffAt:null
   };
 
   S.checklist.forEach(section=>{
@@ -2786,6 +2796,52 @@ function resolveAction(id){
   // afterPhotos are already written into a.afterPhotos by addActionAfterPhoto()
   saveData(); updateBadge(); showToast('✓ Action resolved');
   renderActions(); renderActionStats();
+  renderMonthlyReport(); // refresh the report so sign-off panel updates
+}
+
+// ── Inspection-level sign-off ─────────────────────────────────
+// An inspection is only fully complete when the manager has signed it
+// off. Until then, even with all actions resolved, it stays 'open'.
+// This is the gate that prevents premature PDF generation / handover.
+function signOffInspection(inspId){
+  const insp = S.inspections.find(i => i.id === inspId);
+  if(!insp){ showToast('Inspection not found','error'); return; }
+  if(insp.status === 'signed_off'){
+    showToast('Already signed off','info');
+    return;
+  }
+  // Verify all actions are resolved
+  const acts = S.actions.filter(a => a.inspId === inspId);
+  const unresolved = acts.filter(a => !a.resolved);
+  if(unresolved.length){
+    showToast(`Cannot sign off — ${unresolved.length} action${unresolved.length!==1?'s':''} still open.`, 'error');
+    return;
+  }
+  const signedOffBy = prompt('Manager name (for sign-off record):', S.audit?.auditor || '');
+  if(!signedOffBy || !signedOffBy.trim()){
+    showToast('Sign-off cancelled — name required','info');
+    return;
+  }
+  insp.status = 'signed_off';
+  insp.awaitingReview = false;
+  insp.signedOffBy = signedOffBy.trim();
+  insp.signedOffAt = new Date().toISOString();
+  saveData();
+  showToast('✓ Inspection signed off — ready for PDF / handover');
+  renderMonthlyReport();
+}
+
+function reopenInspection(inspId){
+  const insp = S.inspections.find(i => i.id === inspId);
+  if(!insp) return;
+  if(!confirm(`Re-open this inspection? This removes the sign-off so it can be amended again.\n\n(Useful if the manager spots something after signing off.)`)) return;
+  insp.status = 'open';
+  insp.awaitingReview = true;
+  insp.signedOffBy = null;
+  insp.signedOffAt = null;
+  saveData();
+  showToast('↺ Inspection re-opened','info');
+  renderMonthlyReport();
 }
 
 function renderActionStats(){
@@ -3047,13 +3103,21 @@ function renderMonthlyReport(){
 
     // Card band colour signal: danger if overdue, warning if open, success if all closed, muted if no actions
     const bandStatus = iOverdue>0 ? 'danger' : iOpen>0 ? 'warning' : wAct>0 ? 'success' : '';
-    const statusBadge = iOverdue>0
+    // Status badges — show inspection-level status (signed-off / awaiting review)
+    // in addition to the action-level summary.
+    const signedOffBadge = insp.status === 'signed_off'
+      ? `<span class="badge badge-success">✓ Signed Off</span>`
+      : insp.awaitingReview
+        ? `<span class="badge badge-warning">⏳ Awaiting Review</span>`
+        : '';
+    const actionsBadge = iOverdue>0
       ? `<span class="badge badge-danger">${iOverdue} Overdue</span>`
       : iOpen>0
         ? `<span class="badge badge-warning">${iOpen} Open</span>`
         : wAct>0
           ? `<span class="badge badge-success">All Resolved</span>`
           : `<span class="badge badge-success">No Issues</span>`;
+    const statusBadge = signedOffBadge + actionsBadge;
 
     // Heading: title takes priority, fallback to date range
     const cardHeading = insp.title
@@ -3179,6 +3243,38 @@ function renderMonthlyReport(){
       // No actions — green confirmation
       html+=`<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--success-bg);border:1px solid var(--success-brd);border-radius:7px;font-size:13px;color:var(--success);font-weight:600;">
         ✓ No issues raised in this inspection — all items passed or marked N/A.
+      </div>`;
+    }
+
+    // ── Sign-off panel ──────────────────────────────────────────
+    // The inspection isn't fully complete until every action raised has been
+    // resolved AND the manager has signed it off. Until sign-off, the PDF
+    // is essentially provisional. This is the gate.
+    const isSignedOff = insp.status === 'signed_off';
+    const allActionsResolved = wActions.length === 0 || wActions.every(a => a.resolved);
+
+    if(isSignedOff){
+      html += `<div class="no-print" style="margin-top:14px;padding:14px 16px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:24px;line-height:1;">✓</div>
+        <div style="flex:1;min-width:200px;">
+          <div style="font-size:13px;font-weight:700;color:var(--success);">Inspection signed off — complete</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Signed off by ${insp.signedOffBy || 'manager'} on ${insp.signedOffAt ? fmtDate(insp.signedOffAt.slice(0,10)) : ''}</div>
+        </div>
+        <button class="btn btn-ghost btn-xs" onclick="reopenInspection('${insp.id}')" title="Re-open this inspection if something needs changing">↺ Re-open</button>
+      </div>`;
+    } else if(allActionsResolved){
+      html += `<div class="no-print" style="margin-top:14px;padding:14px 16px;background:var(--accent-light);border:1.5px solid var(--accent);border-radius:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:24px;line-height:1;">📋</div>
+        <div style="flex:1;min-width:200px;">
+          <div style="font-size:13px;font-weight:700;color:var(--accent-dark);">${wActions.length === 0 ? 'No issues raised — ready for sign-off' : 'All actions resolved — ready for sign-off'}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Manager review required. Once signed off, this inspection is locked.</div>
+        </div>
+        <button class="btn btn-success btn-sm" onclick="signOffInspection('${insp.id}')">✓ Sign Off — Complete</button>
+      </div>`;
+    } else {
+      const remaining = wActions.filter(a => !a.resolved).length;
+      html += `<div class="no-print" style="margin-top:14px;padding:12px 14px;background:var(--muted-bg);border:1.5px dashed var(--border);border-radius:9px;font-size:12px;color:var(--text-muted);">
+        ⏳ <strong>${remaining} action${remaining!==1?'s':''} still unresolved.</strong> Sign-off available once every action is rectified and the manager has reviewed them.
       </div>`;
     }
 
