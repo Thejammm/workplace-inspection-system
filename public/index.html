@@ -487,6 +487,17 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
   ══════════════════════════════════════ -->
   <div id="tab-inspection" class="tab-panel active">
 
+    <!-- ── Manager Dashboard (only visible when signed in) ── -->
+    <div class="card no-print" id="managerDashboardCard" style="display:none;">
+      <div class="card-band">
+        <h3><span class="dot">●</span> <span id="dashboardGreeting">Welcome</span></h3>
+        <span class="badge badge-accent no-print" id="dashboardSyncBadge">📡 Syncing to server</span>
+      </div>
+      <div class="card-body">
+        <div id="dashboardStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;"></div>
+      </div>
+    </div>
+
     <!-- ── Inspection Type Picker ── -->
     <div class="card">
       <div class="card-band">
@@ -1731,6 +1742,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderMyChecklist();
   renderTemplates();
   populateBrandingForm();
+  renderManagerDashboard(); // hidden by default — shown when signed in
 
   // ── Auth boot: see if a session cookie is still valid ──
   // The Sign In button is shown by default; if we find a session, we
@@ -2879,6 +2891,7 @@ function signOffInspection(inspId){
   saveData();
   showToast('✓ Inspection signed off — ready for PDF / handover');
   renderMonthlyReport();
+  renderManagerDashboard();
 }
 
 function reopenInspection(inspId){
@@ -2892,6 +2905,7 @@ function reopenInspection(inspId){
   saveData();
   showToast('↺ Inspection re-opened','info');
   renderMonthlyReport();
+  renderManagerDashboard();
 }
 
 function renderActionStats(){
@@ -4216,6 +4230,7 @@ function _rerenderEverything(){
   populateBrandingForm();
   populateReportLocationFilter();
   renderMonthlyReport();
+  renderManagerDashboard();
 }
 
 // ── Login modal handlers ──
@@ -4279,6 +4294,94 @@ function _updateAuthIndicator(){
     if(outBtn) outBtn.style.display = 'none';
     if(ind)    ind.style.display    = 'none';
   }
+  // Refresh dashboard visibility
+  renderManagerDashboard();
+}
+
+// ── Manager Dashboard (visible only when signed in) ──
+// Sits at the top of the Inspection tab. Gives the manager a one-glance
+// view of what needs their attention before they dive into a specific
+// inspection. Counts auto-refresh whenever state changes.
+function renderManagerDashboard(){
+  const card = document.getElementById('managerDashboardCard');
+  if(!card) return;
+  const user = Auth.user();
+  if(!user){
+    card.style.display = 'none';
+    return;
+  }
+
+  // Greeting
+  const greet = document.getElementById('dashboardGreeting');
+  if(greet){
+    const name = user.name || user.email.split('@')[0];
+    const hourly = (() => {
+      const h = new Date().getHours();
+      if(h < 12) return 'Good morning';
+      if(h < 18) return 'Good afternoon';
+      return 'Good evening';
+    })();
+    greet.textContent = `${hourly}, ${name}`;
+  }
+
+  // Stats — compute against the current S.inspections + S.actions
+  const today = new Date(); today.setHours(0,0,0,0);
+  const insps = S.inspections || [];
+  const acts  = S.actions || [];
+
+  const awaitingReview   = insps.filter(i => i.awaitingReview && i.status !== 'signed_off').length;
+  const openActions      = acts.filter(a => !a.resolved).length;
+  const overdueActions   = acts.filter(a => !a.resolved && a.dueDate && new Date(a.dueDate) < today).length;
+  const readyToSignOff   = insps.filter(i => {
+    if(i.status === 'signed_off') return false;
+    const ia = acts.filter(a => a.inspId === i.id);
+    return ia.length === 0 || ia.every(a => a.resolved);
+  }).length;
+  const signedOffMonth   = insps.filter(i => {
+    if(i.status !== 'signed_off' || !i.signedOffAt) return false;
+    const d = new Date(i.signedOffAt);
+    const m = new Date(); m.setDate(1); m.setHours(0,0,0,0);
+    return d >= m;
+  }).length;
+
+  const tile = (label, value, color, icon, action) => `
+    <div class="stat-card${action ? ' clickable' : ''}" ${action ? `onclick="${action}"` : ''}
+         style="${action ? '' : 'cursor:default;'}">
+      <div style="font-size:20px;line-height:1;margin-bottom:4px;">${icon}</div>
+      <div class="stat-num" style="color:${color};">${value}</div>
+      <div class="stat-lbl">${label}</div>
+    </div>`;
+
+  const stats = document.getElementById('dashboardStats');
+  if(stats){
+    stats.innerHTML = [
+      tile('Awaiting Review', awaitingReview, 'var(--warning)', '⏳',
+           awaitingReview ? `switchTab('monthly');setReportStatusFilter('awaiting_review');` : ''),
+      tile('Ready for Sign-Off', readyToSignOff, 'var(--accent-dark)', '📋',
+           readyToSignOff ? `switchTab('monthly');setReportStatusFilter('ready_to_sign_off');` : ''),
+      tile('Open Actions', openActions, openActions > 0 ? 'var(--warning)' : 'var(--text-muted)', '⚠',
+           openActions ? `switchTab('actions');` : ''),
+      tile('Overdue Actions', overdueActions, overdueActions > 0 ? 'var(--danger)' : 'var(--text-muted)', '🔴',
+           overdueActions ? `switchTab('actions');` : ''),
+      tile('Signed Off This Month', signedOffMonth, 'var(--success)', '✓', '')
+    ].join('');
+  }
+
+  card.style.display = 'block';
+}
+
+// Helper used by dashboard click-throughs to set the Monthly Report status filter.
+// Re-uses the existing reportStatusFilter dropdown.
+function setReportStatusFilter(value){
+  const el = document.getElementById('reportStatusFilter');
+  if(!el) return;
+  // 'awaiting_review' and 'ready_to_sign_off' are new dashboard-driven options
+  // — we add them as virtual filters since the existing filter only knows
+  // open/overdue/resolved. We piggyback via a temporary override.
+  el.dataset.dashboardFilter = value;
+  // Fall back to 'open' for now until we extend the dropdown options.
+  el.value = (value === 'awaiting_review' || value === 'ready_to_sign_off') ? '' : value;
+  renderMonthlyReport();
 }
 // Close login modal on background click
 document.addEventListener('DOMContentLoaded', () => {
