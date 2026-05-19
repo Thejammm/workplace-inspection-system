@@ -4585,16 +4585,24 @@ function renderAdminTenants(tenants){
         <th style="padding:8px 12px;">Tenant ID</th>
         <th style="padding:8px 12px;">Name</th>
         <th style="padding:8px 12px;text-align:center;">Users</th>
-        <th style="padding:8px 12px;text-align:right;">Last activity</th>
+        <th style="padding:8px 12px;">Last activity</th>
+        <th style="padding:8px 12px;text-align:right;">Actions</th>
       </tr></thead>
       <tbody>
-        ${tenants.map((t,i) => `
+        ${tenants.map((t,i) => {
+          const tname = String(t.name||'').replace(/'/g,"\\'");
+          return `
           <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};">
             <td style="padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;">${t.id}</td>
             <td style="padding:8px 12px;font-weight:600;">${t.name}</td>
             <td style="padding:8px 12px;text-align:center;">${t.user_count || 0}</td>
-            <td style="padding:8px 12px;text-align:right;color:var(--text-muted);font-size:12px;">${t.last_state_update ? fmtDate(t.last_state_update.slice(0,10)) : '—'}</td>
-          </tr>`).join('')}
+            <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;">${t.last_state_update ? fmtDate(t.last_state_update.slice(0,10)) : '—'}</td>
+            <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
+              <button class="btn btn-outline btn-xs" onclick="renameTenant('${t.id}','${tname}')">✏️ Rename</button>
+              <button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="deleteTenant('${t.id}','${tname}',${t.user_count||0})">🗑 Delete</button>
+            </td>
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>`;
 }
@@ -4629,8 +4637,9 @@ function renderAdminUsers(users, tenants){
             <td style="padding:8px 12px;">${roleLabel}</td>
             <td style="padding:8px 12px;">${tName}</td>
             <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;">${u.last_login_at ? fmtDate(u.last_login_at.slice(0,10)) : 'Never'}</td>
-            <td style="padding:8px 12px;text-align:right;">
+            <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
               <button class="btn btn-outline btn-xs" onclick="openResetPasswordModal('${u.id}','${u.email.replace(/'/g,"\\'")}')">🔑 Reset</button>
+              <button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="deleteUser('${u.id}','${u.email.replace(/'/g,"\\'")}')">🗑 Delete</button>
             </td>
           </tr>`;
         }).join('')}
@@ -4829,6 +4838,87 @@ async function submitResetPassword(userId, email){
   } catch(err){
     console.error(err);
     showToast('Network error resetting password','error');
+  }
+}
+
+// ── Delete user — with self-delete guard server-side ──
+async function deleteUser(userId, email){
+  const me = Auth.user();
+  if(me && String(me.id) === String(userId)){
+    showToast('You cannot delete your own account from here.','error');
+    return;
+  }
+  if(!confirm(`Permanently delete the user "${email}"?\n\nThey'll be unable to sign in. Any inspections they submitted stay on file under their tenant — only the login is removed. This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE', credentials: 'include'
+    });
+    if(!res.ok){
+      const body = await res.json().catch(()=>({}));
+      const msg = body.error === 'cannot_delete_self' ? 'You cannot delete the account you are signed in as.'
+                : body.error === 'user_not_found'     ? 'User no longer exists.'
+                : `Failed: ${body.error||res.status}`;
+      showToast(msg, 'error');
+      return;
+    }
+    showToast(`✓ User "${email}" deleted`, 'success');
+    renderAdminPane();
+  } catch(err){
+    console.error(err);
+    showToast('Network error deleting user','error');
+  }
+}
+
+// ── Rename a tenant ──
+async function renameTenant(tenantId, currentName){
+  const next = prompt(`Rename tenant "${currentName}":\n\n(The Tenant ID stays the same — it's baked into stored data.)`, currentName);
+  if(next === null) return;                      // cancelled
+  const name = String(next).trim();
+  if(!name){ showToast('Name cannot be empty','error'); return; }
+  if(name === currentName){ return; }            // unchanged
+  try {
+    const res = await fetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if(!res.ok){
+      const body = await res.json().catch(()=>({}));
+      showToast(`Failed: ${body.error||res.status}`, 'error');
+      return;
+    }
+    showToast(`✓ Renamed to "${name}"`, 'success');
+    renderAdminPane();
+  } catch(err){
+    console.error(err);
+    showToast('Network error renaming tenant','error');
+  }
+}
+
+// ── Delete a tenant (only if it has zero users) ──
+async function deleteTenant(tenantId, name, userCount){
+  if(userCount > 0){
+    showToast(`Remove the ${userCount} user${userCount>1?'s':''} from "${name}" before deleting the tenant.`,'error');
+    return;
+  }
+  if(!confirm(`Permanently delete the tenant "${name}" (id: ${tenantId})?\n\nAny stored inspection data for this tenant will also be deleted. This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}`, {
+      method: 'DELETE', credentials: 'include'
+    });
+    if(!res.ok){
+      const body = await res.json().catch(()=>({}));
+      const msg = body.error === 'tenant_has_users'  ? `Tenant still has ${body.count} user(s) — remove them first.`
+                : body.error === 'tenant_not_found'  ? 'Tenant no longer exists.'
+                : `Failed: ${body.error||res.status}`;
+      showToast(msg, 'error');
+      return;
+    }
+    showToast(`✓ Tenant "${name}" deleted`, 'success');
+    renderAdminPane();
+  } catch(err){
+    console.error(err);
+    showToast('Network error deleting tenant','error');
   }
 }
 

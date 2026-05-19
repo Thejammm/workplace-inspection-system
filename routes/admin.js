@@ -60,6 +60,43 @@ router.post('/tenants', async (req, res) => {
   }
 });
 
+// PATCH /api/admin/tenants/:id  body: { name } — rename only (id is immutable)
+router.patch('/tenants/:id', async (req, res) => {
+  const id   = req.params.id;
+  const name = String(req.body?.name||'').trim();
+  if(!name){ return res.status(400).json({ error: 'name_required' }); }
+  try {
+    const r = await pool.query(
+      `UPDATE tenants SET name = $1 WHERE id = $2`,
+      [name, id]
+    );
+    if(r.rowCount === 0){ return res.status(404).json({ error: 'tenant_not_found' }); }
+    res.json({ ok: true, tenant: { id, name } });
+  } catch(err){
+    console.error('PATCH /tenants/:id error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// DELETE /api/admin/tenants/:id — fails if any users still belong to it
+router.delete('/tenants/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    const u = await pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE tenant_id = $1`, [id]);
+    if(u.rows[0].n > 0){
+      return res.status(409).json({ error: 'tenant_has_users', count: u.rows[0].n });
+    }
+    // Cascade-delete the tenant's saved app_state if any
+    await pool.query(`DELETE FROM app_state WHERE tenant_id = $1`, [id]);
+    const r = await pool.query(`DELETE FROM tenants WHERE id = $1`, [id]);
+    if(r.rowCount === 0){ return res.status(404).json({ error: 'tenant_not_found' }); }
+    res.json({ ok: true });
+  } catch(err){
+    console.error('DELETE /tenants/:id error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // ── Users ───────────────────────────────────────────────────────
 
 // GET /api/admin/users — list all users
@@ -142,6 +179,23 @@ router.post('/users/:id/reset-password', async (req, res) => {
     res.json({ ok: true });
   } catch(err){
     console.error('reset-password error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// DELETE /api/admin/users/:id — remove a user. Refuses to delete the
+// currently signed-in user (would lock them out of the admin panel).
+router.delete('/users/:id', async (req, res) => {
+  const id = req.params.id;
+  if(req.user && String(req.user.id) === String(id)){
+    return res.status(400).json({ error: 'cannot_delete_self' });
+  }
+  try {
+    const r = await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
+    if(r.rowCount === 0){ return res.status(404).json({ error: 'user_not_found' }); }
+    res.json({ ok: true });
+  } catch(err){
+    console.error('DELETE /users/:id error:', err);
     res.status(500).json({ error: 'server_error' });
   }
 });
