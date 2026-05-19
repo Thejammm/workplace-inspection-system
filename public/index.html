@@ -2479,8 +2479,11 @@ function submitInspection() {
     const today = new Date().toISOString().split('T')[0];
     if(!d.periodFrom) d.periodFrom = today;
     if(!d.periodTo)   d.periodTo   = today;
-    if(!d.manager)    d.manager    = (S.branding?.name || 'Reported by user');
-    if(!d.location)   d.location   = (S.branding?.name || activeType.name);
+    // Defaults pulled from the brand name only — never from anything that
+    // could be an email address, so user emails can't leak into reports.
+    const safeBrand = (S.branding?.name && !/@/.test(S.branding.name)) ? S.branding.name : '';
+    if(!d.manager)    d.manager    = (safeBrand || 'Reported by user');
+    if(!d.location)   d.location   = (safeBrand || activeType.name);
   } else {
     // Checklist-style still requires these manually
     if(!d.periodFrom||!d.periodTo||!d.manager||!d.location){
@@ -4870,6 +4873,16 @@ function migrateLoadedState(){
   if(!S.draft) S.draft = {};
   if(!S.draft.typeId) S.draft.typeId = 'garage_inspection';
   if(!S.draft.formData) S.draft.formData = {};
+
+  // Sanitise: clear any prior values that look like email addresses out of
+  // free-text fields where an email has no business being. Earlier builds
+  // could leak the signed-in user's email into the Reference / Auditor /
+  // Manager / Location fields via stale drafts. This is a one-shot cleanup.
+  const looksLikeEmail = v => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+  ['ref','manager','location','title'].forEach(k => {
+    if(looksLikeEmail(S.draft[k])) S.draft[k] = '';
+  });
+  if(S.audit && looksLikeEmail(S.audit.auditor)) S.audit.auditor = '';
 }
 
 function saveAs(){
@@ -4894,11 +4907,18 @@ function openPdfOptions(){
   // Use the currently filtered inspections shown in the report tab
   const insps = getFilteredInspections();
   if(!insps.length){showToast('No inspections match current filters. Adjust filters in the Report Filters panel first.','error');return;}
-  // Pre-fill from audit/state if available
+  // Pre-fill ONLY from the branding tab — never from random user fields.
+  // Earlier behaviour copied S.audit.auditor into "Prepared By" which could
+  // leak a stale email address; removed.
+  const looksLikeEmail = v => typeof v === 'string' && /@/.test(v);
   const pby=document.getElementById('pdfPreparedBy');
-  if(pby&&!pby.value&&S.audit?.auditor) pby.value=S.audit.auditor;
+  if(pby && !pby.value && S.branding?.name && !looksLikeEmail(S.branding.name)){
+    pby.value = S.branding.name;
+  }
   const pcn=document.getElementById('pdfClientName');
-  if(pcn&&!pcn.value&&insps[0]?.location) pcn.value=insps[0].location;
+  if(pcn && !pcn.value && insps[0]?.location && !looksLikeEmail(insps[0].location)){
+    pcn.value = insps[0].location;
+  }
   document.getElementById('pdfOptionsPanel').style.display='block';
   document.getElementById('pdfOptionsPanel').scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -5588,12 +5608,14 @@ function generatePDF(inspsOverride){
     doc.text(label.toUpperCase(),ML+10,y+1);
     setFont('normal',9,C.charcoal);
     const textLines=doc.splitTextToSize(text||'—',CW-14);
-    doc.text(textLines,ML+10,y+6);
+    doc.text(textLines, ML+10, y+6, {lineHeightFactor:1.2});
     y+=6+(textLines.length*4.5);
     if(subtext){
       setFont('normal',7,C.muted);
-      doc.text(subtext,ML+10,y);
-      y+=4;
+      // Wrap the subtext too — long manager names + dates were overflowing.
+      const subLines = doc.splitTextToSize(subtext, CW-14);
+      doc.text(subLines, ML+10, y, {lineHeightFactor:1.2});
+      y += subLines.length*3.6;
     }
     y+=isLast?4:6;
   };
@@ -5737,20 +5759,23 @@ function generatePDF(inspsOverride){
     bodyText(compText,0);
     y+=4;
 
-    // Legal basis note
-    checkNewPage(16);
+    // Legal basis note — auto-wraps so it always fits the box width cleanly.
+    const legalText = 'The Management of Health & Safety at Work Regulations 1999 (Reg 5) require employers to plan, organise, control, monitor and review preventive and protective measures. This report evidences compliance with that duty.';
+    setFont('normal',7,C.primary);
+    const legalLines = doc.splitTextToSize(legalText, CW-12);
+    const legalBoxH  = 6 + legalLines.length*3.4 + 2; // header + lines + bottom pad
+    checkNewPage(legalBoxH+4);
     doc.setFillColor(...C.infoBg);
-    doc.rect(ML,y,CW,14,'F');
+    doc.rect(ML,y,CW,legalBoxH,'F');
     doc.setDrawColor(...C.infoBrd);
-    doc.rect(ML,y,CW,14);
+    doc.rect(ML,y,CW,legalBoxH);
     doc.setFillColor(...C.cyan);
-    doc.rect(ML,y,3,14,'F');
+    doc.rect(ML,y,3,legalBoxH,'F');
     setFont('bold',7,C.info);
     doc.text('LEGAL CONTEXT',ML+6,y+4.5);
     setFont('normal',7,C.primary);
-    doc.text('The Management of Health & Safety at Work Regulations 1999 (Reg 5) require employers to plan, organise, control, monitor',ML+6,y+8.5);
-    doc.text('and review preventive and protective measures. This report evidences compliance with that duty.',ML+6,y+12);
-    y+=20;
+    doc.text(legalLines, ML+6, y+8.5, {lineHeightFactor:1.2});
+    y += legalBoxH + 6;
   }
 
   // ── INSPECTION BREAKDOWN ──
@@ -5763,29 +5788,45 @@ function generatePDF(inspsOverride){
     y+=3;
 
     insps.forEach((insp,idx)=>{
-      checkNewPage(30);
+      // Build the meta string and pre-wrap so the box auto-sizes to fit.
+      const metaText = insp.title
+        ? `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}  ·  ${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`
+        : `${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`;
+      // Available width inside the header box (minus left bar & padding).
+      const metaWidth   = CW - 12;
+      // Pre-set the font so splitTextToSize measures correctly.
+      setFont('normal',7,C.muted);
+      const metaLines   = doc.splitTextToSize(metaText, metaWidth);
+      // Header box height grows with the wrapped meta line count.
+      const headerH = insp.title
+        ? 7 + metaLines.length*3.6 + 2   // title row + meta lines + bottom pad
+        : 7 + Math.max(0,(metaLines.length-1))*3.6 + 3;
+
+      checkNewPage(headerH + 20);
+
       // Inspection header — brand primary background matching section headings
       doc.setFillColor(...C.mutedBg);
-      doc.rect(ML,y,CW,insp.title?14:10,'F');
+      doc.rect(ML,y,CW,headerH,'F');
       doc.setDrawColor(...C.primary);
-      doc.rect(ML,y,CW,insp.title?14:10);
+      doc.rect(ML,y,CW,headerH);
       doc.setFillColor(...C.cyan);
-      doc.rect(ML,y,3,insp.title?14:10,'F');
+      doc.rect(ML,y,3,headerH,'F');
 
       if(insp.title){
         setFont('bold',9,C.primary);
-        doc.text(insp.title,ML+6,y+5);
+        // Wrap the title too, in case it's long
+        const titleLines = doc.splitTextToSize(insp.title, CW-12);
+        doc.text(titleLines[0]||'', ML+6, y+5);
         setFont('normal',7,C.muted);
-        doc.text(`${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)} · ${freqLabels[insp.freq]||insp.freq} · ${insp.manager}${insp.ref?' · Ref: '+insp.ref:''}${insp.inspType?' · '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`,ML+6,y+10);
-        y+=18;
+        doc.text(metaLines, ML+6, y+10, {lineHeightFactor:1.25});
       } else {
         setFont('bold',9,C.primary);
         const inspTitle=`${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`;
-        doc.text(inspTitle,ML+6,y+6.5);
+        doc.text(inspTitle, ML+6, y+5);
         setFont('normal',7,C.muted);
-        doc.text(`${freqLabels[insp.freq]||insp.freq} · ${insp.manager}${insp.ref?' · Ref: '+insp.ref:''}${insp.inspType?' · '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`,ML+80,y+4);
-        y+=14;
+        doc.text(metaLines, ML+6, y+10, {lineHeightFactor:1.25});
       }
+      y += headerH + 4;
 
       // ── Form-style submission: render field/value pairs ──
       if(insp.kind === 'form' && insp.formSnapshot){
@@ -5934,23 +5975,49 @@ function generatePDF(inspsOverride){
         doc.text('RECTIFIED ON SITE:',ML+2,y);
         y+=4;
         rectItems.forEach(ri=>{
-          checkNewPage(12);
-          doc.setFillColor(209,250,229);
-          doc.rect(ML,y,CW,ri.rd.note?12:8,'F');
-          doc.setFillColor(5,150,105);
-          doc.rect(ML,y,2.5,ri.rd.note?12:8,'F');
+          // Compute "By:" string (right-aligned label) and clamp width so the
+          // item name has its own clean column on the left.
+          const byStr = ri.rd.by ? `By: ${ri.rd.by}` : '';
+          setFont('normal',6,C.muted);
+          const byW = byStr ? Math.min(doc.getTextWidth(byStr)+2, CW*0.35) : 0;
+
+          // Wrap item name in the remaining width on the left.
           setFont('bold',8,[6,95,70]);
-          doc.text(`✔ ${ri.name}`,ML+5,y+4);
+          const nameLines = doc.splitTextToSize(`✔ ${ri.name}`, CW - 10 - byW);
+
+          // Wrap the rectification note across the full width.
+          let noteLines = [];
           if(ri.rd.note){
             setFont('normal',7,[6,95,70]);
-            const noteLines=doc.splitTextToSize(ri.rd.note,CW-10);
-            doc.text(noteLines[0],ML+5,y+9);
+            noteLines = doc.splitTextToSize(ri.rd.note, CW-10);
           }
-          if(ri.rd.by){
+
+          // Box height: name lines + note lines + top/bottom padding
+          const boxH = 4 + nameLines.length*3.6 + (noteLines.length ? noteLines.length*3.4 + 2 : 0) + 2;
+
+          checkNewPage(boxH + 4);
+          doc.setFillColor(209,250,229);
+          doc.rect(ML,y,CW,boxH,'F');
+          doc.setFillColor(5,150,105);
+          doc.rect(ML,y,2.5,boxH,'F');
+
+          // Item name (wrapped)
+          setFont('bold',8,[6,95,70]);
+          doc.text(nameLines, ML+5, y+4, {lineHeightFactor:1.2});
+
+          // Rectification note (wrapped)
+          if(noteLines.length){
+            setFont('normal',7,[6,95,70]);
+            doc.text(noteLines, ML+5, y + 4 + nameLines.length*3.6 + 2, {lineHeightFactor:1.25});
+          }
+
+          // "By:" — right-aligned on the top row, clipped to its column
+          if(byStr){
             setFont('normal',6,C.muted);
-            doc.text(`By: ${ri.rd.by}`,ML+CW,y+(ri.rd.note?9:4),{align:'right'});
+            const byClipped = doc.splitTextToSize(byStr, byW)[0] || byStr;
+            doc.text(byClipped, ML+CW-3, y+4, {align:'right'});
           }
-          y+=(ri.rd.note?12:8)+2;
+          y += boxH + 2;
         });
       }
 
@@ -5998,31 +6065,49 @@ function generatePDF(inspsOverride){
     y+=5;
 
     pActs.forEach((a,idx)=>{
-      checkNewPage(50);
+      // Pre-measure the status badge so we know how much horizontal room is
+      // left for the item-name column on the left.
+      const badgeText  = a.resolved?'RESOLVED':'OPEN';
+      const badgeColor = a.resolved?C.success:C.warning;
+      const badgeBg    = a.resolved?C.successBg:C.warningBg;
+      setFont('bold',7,badgeColor);
+      const badgeW = doc.getTextWidth(badgeText)+6;
+      // Width available to wrap the item name (left of the badge, after the
+      // 3mm coloured bar and 3mm padding either side).
+      const nameW = CW - 12 - badgeW - 3;
+
+      setFont('bold',9,C.primary);
+      const itemNameLines = doc.splitTextToSize(a.itemName||'', nameW);
+      setFont('normal',7,C.muted);
+      const sectionLines  = doc.splitTextToSize(a.sectionName||'', CW-12);
+
+      // Header height grows with the wrapped lines.
+      const headerH = Math.max(10, 3 + itemNameLines.length*4 + sectionLines.length*3.4 + 2);
+
+      checkNewPage(headerH + 40);
 
       // Issue card header
       doc.setFillColor(...C.mutedBg);
-      doc.rect(ML,y,CW,10,'F');
-      doc.setDrawColor(...a.resolved?C.successBrd:C.warningBrd);
-      doc.rect(ML,y,CW,10);
+      doc.rect(ML,y,CW,headerH,'F');
+      doc.setDrawColor(...(a.resolved?C.successBrd:C.warningBrd));
+      doc.rect(ML,y,CW,headerH);
       doc.setFillColor(...(a.resolved?C.success:C.warning));
-      doc.rect(ML,y,3,10,'F');
+      doc.rect(ML,y,3,headerH,'F');
 
+      // Item name (wrapped) — left column
       setFont('bold',9,C.primary);
-      doc.text(a.itemName,ML+6,y+4);
+      doc.text(itemNameLines, ML+6, y+4, {lineHeightFactor:1.2});
+      // Section name (wrapped) — below item name
       setFont('normal',7,C.muted);
-      doc.text(a.sectionName,ML+6,y+8);
+      doc.text(sectionLines, ML+6, y + 4 + itemNameLines.length*4, {lineHeightFactor:1.2});
 
-      // Status badge
-      const badgeText=a.resolved?'RESOLVED':'OPEN';
-      const badgeColor=a.resolved?C.success:C.warning;
-      const badgeBg=a.resolved?C.successBg:C.warningBg;
-      const badgeW=doc.getTextWidth(badgeText)+6;
+      // Status badge — top-right of the header
       doc.setFillColor(...badgeBg);
-      doc.rect(ML+CW-badgeW-3,y+2,badgeW,6,'F');
+      doc.rect(ML+CW-badgeW-3, y+2, badgeW, 6, 'F');
       setFont('bold',7,badgeColor);
-      doc.text(badgeText,ML+CW-badgeW/2-3,y+6.2,{align:'center'});
-      y+=14;
+      doc.text(badgeText, ML+CW-badgeW/2-3, y+6.2, {align:'center'});
+
+      y += headerH + 4;
 
       // Step 1: Identified
       journeyStep(1,'Identified',
