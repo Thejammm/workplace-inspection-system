@@ -562,12 +562,12 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
         </div>
         <!-- Row 3: Completed By + Location -->
         <div class="field-grid" style="margin-bottom:14px;">
-          <div class="field-group"><label class="field-label">Completed By</label><input type="text" id="managerName" placeholder="Full name" oninput="scheduleAutoSave()"></div>
-          <div class="field-group"><label class="field-label">Workplace / Location</label><input type="text" id="workshopLoc" placeholder="e.g. Unit 5 Workshop" oninput="scheduleAutoSave()"></div>
+          <div class="field-group"><label class="field-label">Completed By</label><input type="text" id="managerName" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Full name" oninput="scheduleAutoSave()"></div>
+          <div class="field-group"><label class="field-label">Workplace / Location</label><input type="text" id="workshopLoc" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="e.g. Unit 5 Workshop" oninput="scheduleAutoSave()"></div>
         </div>
         <!-- Row 4: Reference full width — clean finish -->
         <div class="field-grid cols-1">
-          <div class="field-group"><label class="field-label">Reference (optional)</label><input type="text" id="inspRef" placeholder="e.g. WI-2025-01" oninput="scheduleAutoSave()"></div>
+          <div class="field-group"><label class="field-label">Reference (optional)</label><input type="text" id="inspRef" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="e.g. WI-2025-01" oninput="scheduleAutoSave()"></div>
         </div>
       </div>
     </div>
@@ -1961,20 +1961,23 @@ function renderFormField(f, data) {
       return `<div style="padding:14px 16px;background:var(--accent-light);border:1.5px solid var(--accent);border-left:4px solid var(--accent);border-radius:8px;font-size:13px;color:var(--accent-dark);line-height:1.6;white-space:pre-line;">${f.content||''}</div>`;
 
     case 'text':
+      // autocomplete="off" + data-lpignore + data-1p-ignore stops Chrome /
+      // LastPass / 1Password trying to autofill the signed-in user's email
+      // into "name"-ish fields (e.g. "Delivery Driver's Name").
       return `<div class="field-group">${label}
-        <input type="text" id="ff-${f.id}" value="${(v||'').replace(/"/g,'&quot;')}" placeholder="${f.placeholder||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
+        <input type="text" id="ff-${f.id}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" value="${(v||'').replace(/"/g,'&quot;')}" placeholder="${f.placeholder||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
 
     case 'textarea':
       return `<div class="field-group">${label}
-        <textarea id="ff-${f.id}" rows="3" placeholder="${f.placeholder||''}" oninput="updateFormField('${f.id}', this.value)">${v||''}</textarea></div>`;
+        <textarea id="ff-${f.id}" rows="3" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="${f.placeholder||''}" oninput="updateFormField('${f.id}', this.value)">${v||''}</textarea></div>`;
 
     case 'date':
       return `<div class="field-group">${label}
-        <input type="date" id="ff-${f.id}" value="${v||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
+        <input type="date" id="ff-${f.id}" autocomplete="off" value="${v||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
 
     case 'datetime':
       return `<div class="field-group">${label}
-        <input type="datetime-local" id="ff-${f.id}" value="${v||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
+        <input type="datetime-local" id="ff-${f.id}" autocomplete="off" value="${v||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
 
     case 'select': {
       const opts = (f.options||[]).map(o => `<option value="${o.value}"${o.value===v?' selected':''}>${o.label}</option>`).join('');
@@ -4876,13 +4879,36 @@ function migrateLoadedState(){
 
   // Sanitise: clear any prior values that look like email addresses out of
   // free-text fields where an email has no business being. Earlier builds
-  // could leak the signed-in user's email into the Reference / Auditor /
-  // Manager / Location fields via stale drafts. This is a one-shot cleanup.
+  // (and over-eager browser autofill) could leak the signed-in user's
+  // email into Reference / Auditor / Manager / Location and into form-style
+  // field values like "Delivery Driver's Name". This is a one-shot cleanup
+  // that runs whenever state is loaded.
   const looksLikeEmail = v => typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
   ['ref','manager','location','title'].forEach(k => {
     if(looksLikeEmail(S.draft[k])) S.draft[k] = '';
   });
   if(S.audit && looksLikeEmail(S.audit.auditor)) S.audit.auditor = '';
+
+  // Scrub the active draft's form-style data (Near Miss, Tardiness, RTW,
+  // Refuelling). Drop any string field whose value parses as an email.
+  if(S.draft.formData && typeof S.draft.formData === 'object'){
+    Object.keys(S.draft.formData).forEach(k => {
+      if(looksLikeEmail(S.draft.formData[k])) S.draft.formData[k] = '';
+    });
+  }
+
+  // And the same for any already-submitted form inspections still on file
+  // — so opening the Monthly Report or re-opening a saved submission shows
+  // the field blank rather than the stale auto-filled email.
+  if(Array.isArray(S.inspections)){
+    S.inspections.forEach(insp => {
+      if(insp && insp.kind === 'form' && insp.formData && typeof insp.formData === 'object'){
+        Object.keys(insp.formData).forEach(k => {
+          if(looksLikeEmail(insp.formData[k])) insp.formData[k] = '';
+        });
+      }
+    });
+  }
 }
 
 function saveAs(){
