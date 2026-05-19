@@ -205,7 +205,14 @@
         gp_contacted: 'yes',
         fit_note: 'no',
         work_caused: 'no',
-        has_disability: 'no'
+        has_disability: 'no',
+        // Acknowledgment & Sign-off
+        employee_signature: makeSignaturePng('M. Holroyd'),
+        employee_sig_date:  iso(returnD),
+        employee_print:     'M. Holroyd',
+        manager_signature:  makeSignaturePng('L. Briggs'),
+        manager_sig_date:   iso(returnD),
+        manager_print:      'L. Briggs'
       },
       formSnapshot: JSON.parse(JSON.stringify(r)),
       submittedAt: isoT(daysAgo(5)),

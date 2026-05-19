@@ -1693,6 +1693,19 @@ const FORMS = {
           { id:'disability_contributed', type:'select',   label:'5.0 — Has this disability contributed to this period of absence?', required:true, options:YES_NO_NA, showIf:{field:'has_disability', equals:'yes'} },
           { id:'disability_explain',     type:'textarea', label:'5.0.0 — Please explain', required:true, showIf:{field:'disability_contributed', equals:'yes'} }
         ]
+      },
+      {
+        id: 'signoff',
+        name: 'Acknowledgment & Sign-off',
+        fields: [
+          { id:'rtw_ack', type:'disclaimer', content:'Both parties confirm that this Return to Work meeting has taken place, that the information recorded above is accurate to the best of their knowledge, and that any agreed support measures or adjustments have been discussed and understood. This record will be retained on the employee file and treated confidentially in line with the company privacy policy.' },
+          { id:'employee_signature', type:'signature', label:'Employee signature' },
+          { id:'employee_sig_date',  type:'date',      label:'Date',             halfWidth:true },
+          { id:'employee_print',     type:'text',      label:'Employee name (print)', halfWidth:true },
+          { id:'manager_signature',  type:'signature', label:'Manager / Supervisor signature' },
+          { id:'manager_sig_date',   type:'date',      label:'Date',             halfWidth:true },
+          { id:'manager_print',      type:'text',      label:'Manager name (print)',  halfWidth:true }
+        ]
       }
     ]
   }
@@ -5259,10 +5272,13 @@ function generateSingleFormPDF(insp){
 
   // ── Sections + fields ──
   const data = insp.formData||{};
-  insp.formSnapshot.sections.forEach(sec => {
+  insp.formSnapshot.sections.forEach((sec, secIdx) => {
     // Section heading — same bar style as the bulk report (8mm tall, brand
     // primary background, accent left stripe). Reserve enough room for the
     // heading AND at least one field so we don't orphan it at page bottom.
+    // Add a pre-bar gap between sections (not before the first) so titles
+    // breathe vs. the content above them.
+    if(secIdx > 0) y += 3;
     checkNewPage(30);
     doc.setFillColor(...C.primary);
     doc.rect(ML, y, CW, 8, 'F');
@@ -5270,7 +5286,9 @@ function generateSingleFormPDF(insp){
     doc.rect(ML, y, 3, 8, 'F');
     setFont('bold',9,C.white);
     doc.text(sec.name, ML+6, y+5.4);
-    y += 11;
+    // Visual breathing room between the section bar and the first field
+    // label — was 3mm, now 6mm. Stops labels feeling squashed under the bar.
+    y += 14;
 
     // Renders a single "simple" field (text/date/datetime/select/checkbox)
     // at an arbitrary x position with an arbitrary width. Returns the bottom-Y.
@@ -5336,13 +5354,13 @@ function generateSingleFormPDF(insp){
         const cols       = 2;
         const colGap     = 4;
         const innerPad   = 6;
-        const labelH     = f.label ? 5 : 0;
+        const labelH     = f.label ? 4 : 0;
         const colWidth   = (CW - innerPad*2 - colGap*(cols-1)) / cols;
-        const boxSize    = 3;
+        const boxSize    = 2.8;
         const textIndent = boxSize + 2.4;
         const textMaxW   = colWidth - textIndent - 1;
-        const lineH      = 3.9;
-        const rowGap     = 1.0;
+        const lineH      = 3.5;
+        const rowGap     = 0.3;
 
         // Pre-wrap every item and compute the height it occupies.
         setFont('normal',8,C.charcoal);
@@ -5361,8 +5379,8 @@ function generateSingleFormPDF(insp){
           columnsAlloc[cIdx].items.push(i);
           columnsAlloc[cIdx].height += itemHeights[i] + rowGap;
         });
-        const blockBodyH = Math.max(...columnsAlloc.map(c => c.height)) + 3;
-        const blockH = labelH + blockBodyH + 4;
+        const blockBodyH = Math.max(...columnsAlloc.map(c => c.height)) + 2;
+        const blockH = labelH + blockBodyH + 3;
 
         checkNewPage(blockH + 3);
 
@@ -6013,22 +6031,28 @@ function generatePDF(inspsOverride){
   if(typeLabel) coverInfo.splice(2,0,{label:'Inspection Type',value:typeLabel});
   if(reportRef) coverInfo.push({label:'Report Reference',value:reportRef});
 
+  // Cover info rows auto-grow when a value wraps — long aggregated locations
+  // like "Workshop Aisle 3, Transport Office, Garage, ..." used to overflow
+  // the right edge of the page.
   coverInfo.forEach(item=>{
-    setFont('bold',7,C.muted);
-    doc.text(item.label.toUpperCase(),ML,y);
     setFont('normal',10,C.primary);
-    doc.text(item.value,ML+52,y);
+    const valueLines = doc.splitTextToSize(String(item.value||'—'), CW - 52 - 2);
+    const rowH = Math.max(8, valueLines.length*4.6 + 3);
+    setFont('bold',7,C.muted);
+    doc.text(item.label.toUpperCase(),ML,y+4);
+    setFont('normal',10,C.primary);
+    doc.text(valueLines, ML+52, y+4, {lineHeightFactor:1.2});
     doc.setDrawColor(...C.border);
-    doc.line(ML,y+1.5,ML+CW,y+1.5);
-    y+=8;
+    doc.line(ML, y+rowH-2, ML+CW, y+rowH-2);
+    y += rowH;
   });
 
   // Overall status box
   y+=6;
   const statusColors={
-    satisfactory:{bg:C.successBg,brd:C.successBrd,txt:C.success,label:'✓  SATISFACTORY — MANAGEMENT PROCESS WORKING WELL'},
-    improvement: {bg:C.warningBg,brd:C.warningBrd,txt:C.warning,label:'⚠  IMPROVEMENT REQUIRED — ISSUES IDENTIFIED'},
-    unsatisfactory:{bg:C.dangerBg,brd:C.dangerBrd,txt:C.danger,label:'✗  UNSATISFACTORY — IMMEDIATE ACTION REQUIRED'},
+    satisfactory:{bg:C.successBg,brd:C.successBrd,txt:C.success,label:'SATISFACTORY — MANAGEMENT PROCESS WORKING WELL'},
+    improvement: {bg:C.warningBg,brd:C.warningBrd,txt:C.warning,label:'IMPROVEMENT REQUIRED — ISSUES IDENTIFIED'},
+    unsatisfactory:{bg:C.dangerBg,brd:C.dangerBrd,txt:C.danger,label:'UNSATISFACTORY — IMMEDIATE ACTION REQUIRED'},
   };
   const sc=statusColors[complianceStatus]||statusColors.satisfactory;
   // Pre-wrap so the banner auto-grows if the label is long.
@@ -6182,7 +6206,11 @@ function generatePDF(inspsOverride){
           // Skip display-only field types in the bulk Inspection Record list
           const visible = sec.fields.filter(f => !['instruction','checklist','disclaimer'].includes(f.type) && _isFieldVisible(f, data));
           if(!visible.length) return;
-          checkNewPage(10);
+          // Reserve enough room for the section heading AND the first couple
+          // of field rows so we don't orphan the heading at page bottom
+          // (previously just 10mm, which broke "Driver Sign-off" sections
+          // away from their content).
+          checkNewPage(28);
           setFont('bold',8,C.primary);
           doc.text(sec.name, ML+2, y);
           doc.setDrawColor(...C.border);
@@ -6240,28 +6268,80 @@ function generatePDF(inspsOverride){
       // Show every single item with its status — this is the actual compliance
       // record. Without this, the client only sees the things that went wrong,
       // not the (typically much larger) list of things they got right.
-      insp.checklistSnapshot?.forEach(sec=>{
-        const secPass=sec.items.filter(i=>insp.results[i.id]==='pass').length;
-        const secRect=sec.items.filter(i=>insp.results[i.id]==='rectified').length;
-        const secAct=sec.items.filter(i=>insp.results[i.id]==='action').length;
-        const secNA=sec.items.filter(i=>insp.results[i.id]==='na').length;
 
-        // Section header bar
-        checkNewPage(12);
+      // Helper: draw a status badge inside a small box. We draw shapes with
+      // line segments / filled primitives because jsPDF's built-in helvetica
+      // doesn't carry the unicode ✓ ⚠ ✔ glyphs and renders garbage in their
+      // place (the "'", "&" symbols seen in earlier PDF outputs).
+      const drawStatusIcon = (status, x, y) => {
+        const cx = x + 1.6, cy = y - 1.5;          // centre point
+        const r  = 1.5;
+        doc.setLineWidth(0.45);
+        doc.setLineCap('round');
+        doc.setLineJoin('round');
+        if(status === 'pass' || status === 'rectified'){
+          const fill = status === 'rectified' ? C.rectified : C.success;
+          doc.setFillColor(...fill);
+          doc.circle(cx, cy, r, 'F');
+          // White checkmark inside
+          doc.setDrawColor(255,255,255);
+          doc.line(cx - 0.75, cy + 0.05,  cx - 0.15, cy + 0.65);
+          doc.line(cx - 0.15, cy + 0.65,  cx + 0.85, cy - 0.55);
+          if(status === 'rectified'){
+            // Second tick offset slightly to suggest "double-check"
+            doc.line(cx - 0.05, cy + 0.05,  cx + 0.45, cy + 0.55);
+            doc.line(cx + 0.45, cy + 0.55,  cx + 1.05, cy - 0.45);
+          }
+        } else if(status === 'action'){
+          doc.setFillColor(...C.warning);
+          // Warning triangle
+          doc.triangle(cx, cy - 1.4,  cx - 1.4, cy + 0.9,  cx + 1.4, cy + 0.9, 'F');
+          // Black "!" inside (helvetica supports "!" natively)
+          doc.setTextColor(0,0,0);
+          doc.setFont('helvetica','bold');
+          doc.setFontSize(7);
+          doc.text('!', cx, cy + 0.7, {align:'center'});
+        } else if(status === 'na'){
+          // Grey horizontal dash
+          doc.setDrawColor(...C.muted);
+          doc.setLineWidth(0.7);
+          doc.line(cx - 1.3, cy, cx + 1.3, cy);
+        } else {
+          // Not done — empty red ring
+          doc.setDrawColor(...C.danger);
+          doc.setLineWidth(0.5);
+          doc.circle(cx, cy, r, 'S');
+        }
+        // Reset for callers
+        doc.setLineWidth(0.2);
+        doc.setDrawColor(0,0,0);
+      };
+
+      insp.checklistSnapshot?.forEach(sec=>{
+        const secPass=sec.items.filter(i=>insp.results?.[i.id]==='pass').length;
+        const secRect=sec.items.filter(i=>insp.results?.[i.id]==='rectified').length;
+        const secAct=sec.items.filter(i=>insp.results?.[i.id]==='action').length;
+        const secNA=sec.items.filter(i=>insp.results?.[i.id]==='na').length;
+
+        // Section header bar — reserve enough vertical room that the heading
+        // AND the first one or two item rows always land on the same page.
+        // Stops "orphaned" section headings at the bottom of a page.
+        checkNewPage(28);
         doc.setFillColor(...C.primary);
         doc.rect(ML, y, CW, 7, 'F');
         doc.setFillColor(...C.cyan);
         doc.rect(ML, y, 2.5, 7, 'F');
         setFont('bold', 8, C.white);
         doc.text(sec.name, ML+5, y+5);
-        // Compact counts on the right
+        // Compact counts on the right — plain ASCII labels so they render
+        // reliably (no unicode tick/warning glyphs).
         setFont('normal', 7, C.cyanLight);
         const counts = [];
-        if(secPass>0) counts.push(`${secPass}✓`);
-        if(secRect>0) counts.push(`${secRect}✔`);
-        if(secAct>0)  counts.push(`${secAct}⚠`);
-        if(secNA>0)   counts.push(`${secNA}—`);
-        doc.text(counts.join('  '), ML+CW-3, y+5, {align:'right'});
+        if(secPass>0) counts.push(`${secPass} Pass`);
+        if(secRect>0) counts.push(`${secRect} Rect`);
+        if(secAct>0)  counts.push(`${secAct} Action`);
+        if(secNA>0)   counts.push(`${secNA} N/A`);
+        doc.text(counts.join('  ·  '), ML+CW-3, y+5, {align:'right'});
         y += 9;
 
         // Per-item rows
@@ -6271,38 +6351,38 @@ function generatePDF(inspsOverride){
           y += 5;
           return;
         }
-        sec.items.forEach(item => {
+        sec.items.forEach((item, ii) => {
           const status = insp.results?.[item.id] || '';
-          // Determine icon + colour based on status
-          let icon, iconColor, statusLabel;
+          let iconColor, statusLabel;
           switch(status){
-            case 'pass':      icon='✓'; iconColor=C.success;   statusLabel='Pass';      break;
-            case 'rectified': icon='✔'; iconColor=C.rectified; statusLabel='Rectified'; break;
-            case 'action':    icon='⚠'; iconColor=C.warning;   statusLabel='Action';    break;
-            case 'na':        icon='—'; iconColor=C.muted;     statusLabel='N/A';       break;
-            default:          icon='○'; iconColor=C.danger;    statusLabel='Not done';  break;
+            case 'pass':      iconColor=C.success;   statusLabel='Pass';      break;
+            case 'rectified': iconColor=C.rectified; statusLabel='Rectified'; break;
+            case 'action':    iconColor=C.warning;   statusLabel='Action';    break;
+            case 'na':        iconColor=C.muted;     statusLabel='N/A';       break;
+            default:          iconColor=C.danger;    statusLabel='Not done';  break;
           }
-          // Indicator icons: 💬 if note, 📷 if action photos (compact: just chars)
+          // Indicator suffixes — plain ASCII, since the emoji glyphs aren't
+          // in helvetica either.
           const hasNote   = !!(insp.notes?.[item.id]?.trim());
           const hasPhotos = !!(insp.actionDetails?.[item.id]?.beforePhotos?.length);
-          const indicators = (hasNote ? ' 💬' : '') + (hasPhotos ? ' 📷' : '');
+          const indicators = (hasNote ? '  [note]' : '') + (hasPhotos ? '  [photo]' : '');
 
-          // Wrap the item name to fit (leaving room for icon and status label on right)
+          // Wrap the item name to fit (leaving room for icon + right label)
           const labelW = doc.getTextWidth(statusLabel) + 3;
           const nameMaxW = CW - 14 - labelW;
+          setFont('normal', 8, C.charcoal);
           const nameLines = doc.splitTextToSize(item.name + indicators, nameMaxW);
           const rowH = Math.max(5, nameLines.length * 4 + 1.5);
           checkNewPage(rowH + 1);
 
           // Alternating row background for readability
-          if((sec.items.indexOf(item) % 2) === 0){
+          if((ii % 2) === 0){
             doc.setFillColor(...C.mutedBg);
             doc.rect(ML, y, CW, rowH, 'F');
           }
 
-          // Status icon
-          setFont('bold', 10, iconColor);
-          doc.text(icon, ML+4, y+4);
+          // Status icon — drawn, not glyph
+          drawStatusIcon(status, ML+2, y+4);
 
           // Item name (wrapped)
           setFont('normal', 8, C.charcoal);
