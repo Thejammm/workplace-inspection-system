@@ -5599,9 +5599,16 @@ function generatePDF(inspsOverride){
 
   // ── Gather data — use override if supplied (per-card PDF button),
   //    otherwise the currently filtered inspections in the Monthly Report tab.
-  const insps = Array.isArray(inspsOverride) && inspsOverride.length
-    ? inspsOverride
-    : getFilteredInspections();
+  // Near Miss reports are deliberately excluded from the BULK report — they
+  // are stand-alone incident records and should never be bundled into a
+  // periodic aggregate. (Per-card PDF buttons still render Near Miss
+  // individually because they pass an explicit inspsOverride.)
+  let insps;
+  if(Array.isArray(inspsOverride) && inspsOverride.length){
+    insps = inspsOverride;
+  } else {
+    insps = getFilteredInspections().filter(i => i.typeId !== 'near_miss');
+  }
   if(!insps.length){showToast('No inspections match current filters.','error');return;}
 
   // Build a period label from the actual date range of filtered inspections
