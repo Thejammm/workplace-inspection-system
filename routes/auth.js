@@ -62,6 +62,40 @@ router.post('/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/auth/change-password — user changes their own password
+// Requires the current password AND the new one (8+ chars).
+router.post('/change-password', requireAuth, async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '');
+  const newPassword     = String(req.body?.newPassword || '');
+
+  if(!newPassword || newPassword.length < 8){
+    return res.status(400).json({ error: 'password_min_8' });
+  }
+  if(currentPassword === newPassword){
+    return res.status(400).json({ error: 'password_unchanged' });
+  }
+
+  try {
+    const r = await pool.query(
+      `SELECT password_hash FROM users WHERE id = $1 LIMIT 1`,
+      [req.user.id]
+    );
+    if(!r.rows.length){
+      return res.status(401).json({ error: 'user_not_found' });
+    }
+    const ok = await bcrypt.compare(currentPassword, r.rows[0].password_hash);
+    if(!ok){
+      return res.status(401).json({ error: 'current_password_wrong' });
+    }
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [newHash, req.user.id]);
+    res.json({ ok: true });
+  } catch(err){
+    console.error('change-password error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // GET /api/auth/me — returns current user (or 401 if not logged in)
 router.get('/me', requireAuth, async (req, res) => {
   // Re-read from DB so we get the latest tenant + role (in case of recent changes)

@@ -817,6 +817,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       <button class="setup-nav-btn" data-spane="library" onclick="switchSetupPane('library')">📋 Inspection Lists</button>
       <button class="setup-nav-btn" data-spane="templates" onclick="switchSetupPane('templates')">🗂️ My Library</button>
       <button class="setup-nav-btn" data-spane="branding" onclick="switchSetupPane('branding')">🎨 Report Branding</button>
+      <button class="setup-nav-btn" data-spane="admin" id="setupNavAdmin" onclick="switchSetupPane('admin')" style="display:none;">🛡️ Admin</button>
     </div>
 
     <!-- ── PANE A: My Checklist ── -->
@@ -1045,6 +1046,48 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- ── PANE E: Admin (consultant only — sign-in required) ── -->
+    <div id="spane-admin" class="setup-pane">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:16px;font-weight:700;">Admin — Tenants &amp; Users</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:2px;">
+          Create new client tenants and manage who can log in. Visible only to consultants.
+        </div>
+      </div>
+
+      <!-- Sign-in required notice (shown when not signed in) -->
+      <div id="adminSignInPrompt" style="display:none;padding:20px;background:var(--warning-bg);border:1.5px solid var(--warning-brd);border-radius:10px;text-align:center;">
+        <div style="font-size:32px;margin-bottom:8px;">🔐</div>
+        <div style="font-size:14px;font-weight:600;color:var(--warning);margin-bottom:6px;">Sign in to access Admin</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">You need to be signed in as a consultant to manage tenants and users.</div>
+        <button class="btn btn-primary btn-sm" onclick="openLoginModal()">🔐 Sign in</button>
+      </div>
+
+      <!-- Tenants section -->
+      <div id="adminContent" style="display:none;">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-band">
+            <h3><span class="dot">●</span> Clients (Tenants)</h3>
+            <button class="btn btn-primary btn-sm no-print" onclick="openAddTenantModal()">＋ Add Client</button>
+          </div>
+          <div class="card-body">
+            <div id="adminTenantsList"><em style="color:var(--text-muted);font-size:13px;">Loading…</em></div>
+          </div>
+        </div>
+
+        <!-- Users section -->
+        <div class="card">
+          <div class="card-band">
+            <h3><span class="dot">●</span> Users (Logins)</h3>
+            <button class="btn btn-primary btn-sm no-print" onclick="openAddUserModal()">＋ Add User</button>
+          </div>
+          <div class="card-body">
+            <div id="adminUsersList"><em style="color:var(--text-muted);font-size:13px;">Loading…</em></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1835,6 +1878,7 @@ function switchSetupPane(id) {
   if(id==='library') renderScenarioGrid();
   if(id==='templates') renderTemplates();
   if(id==='branding') populateBrandingForm();
+  if(id==='admin') renderAdminPane();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4280,22 +4324,384 @@ function _updateAuthIndicator(){
   const inBtn  = document.getElementById('signInBtn');
   const outBtn = document.getElementById('signOutBtn');
   const ind    = document.getElementById('userIndicator');
+  const adminNav = document.getElementById('setupNavAdmin');
   const user = Auth.user();
   if(user){
     if(inBtn)  inBtn.style.display  = 'none';
     if(outBtn) outBtn.style.display = 'inline-flex';
     if(ind){
       ind.style.display = 'inline-flex';
+      ind.style.cursor = 'pointer';
+      ind.title = 'Click to change your password';
+      ind.onclick = openChangeMyPasswordModal;
       const tenantBit = user.tenantName ? ` · ${user.tenantName}` : (user.role === 'consultant' ? ' · consultant' : '');
       ind.textContent = `🔐 ${user.name || user.email}${tenantBit}`;
     }
+    // Show the Admin nav button only for consultants
+    if(adminNav) adminNav.style.display = (user.role === 'consultant') ? 'inline-flex' : 'none';
   } else {
     if(inBtn)  inBtn.style.display  = 'inline-flex';
     if(outBtn) outBtn.style.display = 'none';
-    if(ind)    ind.style.display    = 'none';
+    if(ind){
+      ind.style.display = 'none';
+      ind.onclick = null;
+    }
+    if(adminNav) adminNav.style.display = 'none';
   }
   // Refresh dashboard visibility
   renderManagerDashboard();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ADMIN PANE — consultant-only management of tenants + users
+// ══════════════════════════════════════════════════════════════
+async function renderAdminPane(){
+  const user = Auth.user();
+  const prompt = document.getElementById('adminSignInPrompt');
+  const content = document.getElementById('adminContent');
+  if(!prompt || !content) return;
+
+  if(!user || user.role !== 'consultant'){
+    prompt.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  prompt.style.display = 'none';
+  content.style.display = 'block';
+  await loadAndRenderAdminData();
+}
+
+async function loadAndRenderAdminData(){
+  try {
+    const [t, u] = await Promise.all([
+      fetch('/api/admin/tenants', { credentials: 'include' }).then(r => r.json()),
+      fetch('/api/admin/users',   { credentials: 'include' }).then(r => r.json())
+    ]);
+    renderAdminTenants(t.tenants || []);
+    renderAdminUsers(u.users || [], t.tenants || []);
+  } catch(err){
+    console.error('Failed to load admin data:', err);
+    showToast('Failed to load admin data — check console', 'error');
+  }
+}
+
+function renderAdminTenants(tenants){
+  const el = document.getElementById('adminTenantsList');
+  if(!el) return;
+  if(!tenants.length){
+    el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px;">No tenants yet. Click "+ Add Client" to create your first one.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;">
+        <th style="padding:8px 12px;">Tenant ID</th>
+        <th style="padding:8px 12px;">Name</th>
+        <th style="padding:8px 12px;text-align:center;">Users</th>
+        <th style="padding:8px 12px;text-align:right;">Last activity</th>
+      </tr></thead>
+      <tbody>
+        ${tenants.map((t,i) => `
+          <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};">
+            <td style="padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;">${t.id}</td>
+            <td style="padding:8px 12px;font-weight:600;">${t.name}</td>
+            <td style="padding:8px 12px;text-align:center;">${t.user_count || 0}</td>
+            <td style="padding:8px 12px;text-align:right;color:var(--text-muted);font-size:12px;">${t.last_state_update ? fmtDate(t.last_state_update.slice(0,10)) : '—'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderAdminUsers(users, tenants){
+  const el = document.getElementById('adminUsersList');
+  if(!el) return;
+  if(!users.length){
+    el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px;">No users yet. Click "+ Add User" to create one.</div>`;
+    return;
+  }
+  const tenantById = Object.fromEntries((tenants||[]).map(t => [t.id, t]));
+  el.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;">
+        <th style="padding:8px 12px;">Email</th>
+        <th style="padding:8px 12px;">Role</th>
+        <th style="padding:8px 12px;">Tenant</th>
+        <th style="padding:8px 12px;">Last login</th>
+        <th style="padding:8px 12px;text-align:right;">Actions</th>
+      </tr></thead>
+      <tbody>
+        ${users.map((u,i) => {
+          const tName = u.tenant_id ? (tenantById[u.tenant_id]?.name || u.tenant_id) : '—';
+          const roleLabel = u.role === 'consultant' ? '🛡️ Consultant' : '👤 Client user';
+          return `
+          <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};">
+            <td style="padding:8px 12px;">
+              <div style="font-weight:600;">${u.email}</div>
+              ${u.display_name ? `<div style="font-size:11px;color:var(--text-muted);">${u.display_name}</div>` : ''}
+            </td>
+            <td style="padding:8px 12px;">${roleLabel}</td>
+            <td style="padding:8px 12px;">${tName}</td>
+            <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;">${u.last_login_at ? fmtDate(u.last_login_at.slice(0,10)) : 'Never'}</td>
+            <td style="padding:8px 12px;text-align:right;">
+              <button class="btn btn-outline btn-xs" onclick="openResetPasswordModal('${u.id}','${u.email.replace(/'/g,"\\'")}')">🔑 Reset</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+// ── Add Tenant modal ──
+function openAddTenantModal(){
+  openModal('Add Client (Tenant)',
+    `<div style="display:flex;flex-direction:column;gap:12px;">
+       <div class="field-group">
+         <label class="field-label">Client business name</label>
+         <input type="text" id="mTenantName" placeholder="e.g. Easy Travel Leeds" autofocus>
+       </div>
+       <div class="field-group">
+         <label class="field-label">Tenant ID (optional — auto-generated from name)</label>
+         <input type="text" id="mTenantId" placeholder="e.g. easy-travel-leeds" pattern="[a-z0-9-]+">
+         <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Lowercase letters, numbers, dashes only. Cannot be changed later.</div>
+       </div>
+       <div style="padding:10px 12px;background:var(--accent-light);border:1px solid var(--accent);border-radius:7px;font-size:12px;color:var(--accent-dark);">
+         💡 After creating the tenant, add a user account with their manager's email so they can log in.
+       </div>
+     </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="submitAddTenant()">＋ Create Tenant</button>`
+  );
+}
+async function submitAddTenant(){
+  const name = document.getElementById('mTenantName')?.value.trim();
+  const id   = document.getElementById('mTenantId')?.value.trim();
+  if(!name){ showToast('Please enter a client name','error'); return; }
+  try {
+    const res = await fetch('/api/admin/tenants', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, id })
+    });
+    const body = await res.json();
+    if(!res.ok){
+      showToast(body.error === 'tenant_id_exists' ? 'A tenant with that ID already exists' : `Failed: ${body.error||res.status}`, 'error');
+      return;
+    }
+    closeModal();
+    showToast(`✓ Created tenant "${body.tenant.name}"`, 'success');
+    loadAndRenderAdminData();
+  } catch(err){
+    console.error(err);
+    showToast('Network error creating tenant','error');
+  }
+}
+
+// ── Add User modal ──
+async function openAddUserModal(){
+  // Fetch tenants for the dropdown
+  let tenants = [];
+  try {
+    const r = await fetch('/api/admin/tenants', { credentials: 'include' }).then(r => r.json());
+    tenants = r.tenants || [];
+  } catch(e){ /* leave empty */ }
+  const tenantOptions = tenants.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+
+  openModal('Add User (Login)',
+    `<div style="display:flex;flex-direction:column;gap:12px;">
+       <div class="field-group">
+         <label class="field-label">Email</label>
+         <input type="email" id="mUserEmail" placeholder="liam@egsleeds.com" autofocus>
+       </div>
+       <div class="field-group">
+         <label class="field-label">Display name (optional)</label>
+         <input type="text" id="mUserName" placeholder="e.g. Liam Gartland">
+       </div>
+       <div class="field-group">
+         <label class="field-label">Role</label>
+         <select id="mUserRole" onchange="document.getElementById('mUserTenantGroup').style.display=this.value==='client_user'?'flex':'none';">
+           <option value="client_user" selected>👤 Client user (logs into one tenant)</option>
+           <option value="consultant">🛡️ Consultant (sees all tenants)</option>
+         </select>
+       </div>
+       <div class="field-group" id="mUserTenantGroup">
+         <label class="field-label">Tenant</label>
+         <select id="mUserTenant">
+           <option value="">— Pick a tenant —</option>
+           ${tenantOptions}
+         </select>
+       </div>
+       <div class="field-group">
+         <label class="field-label">Starter password (8+ chars)</label>
+         <div style="display:flex;gap:6px;">
+           <input type="text" id="mUserPassword" placeholder="ChangeMe2026!" style="flex:1;">
+           <button class="btn btn-outline btn-sm" onclick="document.getElementById('mUserPassword').value=_generatePassword();" type="button">🎲 Generate</button>
+         </div>
+         <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">User can change this after first login.</div>
+       </div>
+     </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="submitAddUser()">＋ Create User</button>`
+  );
+}
+function _generatePassword(){
+  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$%';
+  let p = '';
+  for(let i = 0; i < 12; i++) p += chars[Math.floor(Math.random() * chars.length)];
+  return p;
+}
+async function submitAddUser(){
+  const email       = document.getElementById('mUserEmail')?.value.trim();
+  const displayName = document.getElementById('mUserName')?.value.trim();
+  const role        = document.getElementById('mUserRole')?.value;
+  const tenantId    = document.getElementById('mUserTenant')?.value || null;
+  const password    = document.getElementById('mUserPassword')?.value;
+  if(!email)            { showToast('Email required','error'); return; }
+  if(!password || password.length < 8){ showToast('Password must be at least 8 chars','error'); return; }
+  if(role === 'client_user' && !tenantId){ showToast('Client users must be assigned to a tenant','error'); return; }
+
+  try {
+    const res = await fetch('/api/admin/users', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, role, tenantId: role==='client_user'?tenantId:null, displayName })
+    });
+    const body = await res.json();
+    if(!res.ok){
+      showToast(body.error === 'email_exists' ? 'A user with that email already exists' : `Failed: ${body.error||res.status}`, 'error');
+      return;
+    }
+    closeModal();
+    // Show the credentials in a follow-up modal so the consultant can copy them
+    openModal('✓ User created',
+      `<div style="display:flex;flex-direction:column;gap:12px;">
+         <div style="padding:14px 16px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:8px;">
+           <div style="font-size:13px;color:var(--success);margin-bottom:10px;">User account created. <strong>Send these credentials to them now</strong> — the password won't be shown again.</div>
+           <div style="font-family:'DM Mono',monospace;font-size:13px;background:#fff;padding:10px 12px;border-radius:6px;border:1px solid var(--success-brd);">
+             <div style="margin-bottom:4px;"><strong>URL:</strong> https://inspections.archerhs.co.uk</div>
+             <div style="margin-bottom:4px;"><strong>Email:</strong> ${email}</div>
+             <div><strong>Password:</strong> ${password}</div>
+           </div>
+         </div>
+         <div style="padding:10px 12px;background:var(--accent-light);border:1px solid var(--accent);border-radius:7px;font-size:12px;color:var(--accent-dark);">
+           💡 Tip: copy the block above into an email to the user. Ask them to change the password after first login by clicking their name in the header.
+         </div>
+       </div>`,
+      `<button class="btn btn-primary" onclick="closeModal()">Done</button>`
+    );
+    loadAndRenderAdminData();
+  } catch(err){
+    console.error(err);
+    showToast('Network error creating user','error');
+  }
+}
+
+// ── Reset Password (admin → user) ──
+function openResetPasswordModal(userId, email){
+  openModal(`Reset password for ${email}`,
+    `<div style="display:flex;flex-direction:column;gap:12px;">
+       <div class="field-group">
+         <label class="field-label">New password (8+ chars)</label>
+         <div style="display:flex;gap:6px;">
+           <input type="text" id="mResetPwd" autofocus style="flex:1;">
+           <button class="btn btn-outline btn-sm" onclick="document.getElementById('mResetPwd').value=_generatePassword();" type="button">🎲 Generate</button>
+         </div>
+       </div>
+       <div style="padding:10px 12px;background:var(--warning-bg);border:1px solid var(--warning-brd);border-radius:7px;font-size:12px;color:var(--warning);">
+         ⚠️ This will overwrite their current password. They'll need to use the new one to sign in.
+       </div>
+     </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="submitResetPassword('${userId}','${email.replace(/'/g,"\\'")}')">🔑 Reset Password</button>`
+  );
+}
+async function submitResetPassword(userId, email){
+  const password = document.getElementById('mResetPwd')?.value;
+  if(!password || password.length < 8){ showToast('Password must be at least 8 chars','error'); return; }
+  try {
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    if(!res.ok){
+      const body = await res.json();
+      showToast(`Failed: ${body.error||res.status}`, 'error');
+      return;
+    }
+    closeModal();
+    openModal('✓ Password reset',
+      `<div style="padding:14px 16px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:8px;">
+         <div style="font-size:13px;color:var(--success);margin-bottom:10px;">Password reset successfully. <strong>Send these to them:</strong></div>
+         <div style="font-family:'DM Mono',monospace;font-size:13px;background:#fff;padding:10px 12px;border-radius:6px;border:1px solid var(--success-brd);">
+           <div style="margin-bottom:4px;"><strong>Email:</strong> ${email}</div>
+           <div><strong>New password:</strong> ${password}</div>
+         </div>
+       </div>`,
+      `<button class="btn btn-primary" onclick="closeModal()">Done</button>`
+    );
+  } catch(err){
+    console.error(err);
+    showToast('Network error resetting password','error');
+  }
+}
+
+// ── Change My Own Password (any signed-in user) ──
+function openChangeMyPasswordModal(){
+  const user = Auth.user();
+  if(!user) return;
+  openModal(`Change your password`,
+    `<div style="display:flex;flex-direction:column;gap:12px;">
+       <div style="font-size:13px;color:var(--text-muted);">Signed in as <strong>${user.email}</strong></div>
+       <div class="field-group">
+         <label class="field-label">Current password</label>
+         <input type="password" id="mCurrentPwd" autocomplete="current-password" autofocus>
+       </div>
+       <div class="field-group">
+         <label class="field-label">New password (8+ chars)</label>
+         <input type="password" id="mNewPwd" autocomplete="new-password">
+       </div>
+       <div class="field-group">
+         <label class="field-label">Confirm new password</label>
+         <input type="password" id="mNewPwd2" autocomplete="new-password">
+       </div>
+       <div id="mChangePwdError" style="display:none;font-size:13px;padding:9px 12px;background:var(--danger-bg);border:1px solid var(--danger-brd);border-radius:6px;color:var(--danger);"></div>
+     </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="submitChangeMyPassword()">Change Password</button>`
+  );
+}
+async function submitChangeMyPassword(){
+  const currentPassword = document.getElementById('mCurrentPwd')?.value;
+  const newPassword     = document.getElementById('mNewPwd')?.value;
+  const newPassword2    = document.getElementById('mNewPwd2')?.value;
+  const errEl = document.getElementById('mChangePwdError');
+  const showErr = msg => { errEl.textContent = msg; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+
+  if(!currentPassword){ showErr('Enter your current password'); return; }
+  if(!newPassword || newPassword.length < 8){ showErr('New password must be at least 8 characters'); return; }
+  if(newPassword !== newPassword2){ showErr('New passwords don\'t match'); return; }
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const body = await res.json();
+    if(!res.ok){
+      const msg = body.error === 'current_password_wrong' ? 'Current password is wrong'
+                : body.error === 'password_unchanged'     ? 'New password must be different from your current one'
+                : body.error === 'password_min_8'         ? 'Password must be at least 8 characters'
+                : `Failed: ${body.error || res.status}`;
+      showErr(msg);
+      return;
+    }
+    closeModal();
+    showToast('✓ Password changed','success');
+  } catch(err){
+    console.error(err);
+    showErr('Network error — try again');
+  }
 }
 
 // ── Manager Dashboard (visible only when signed in) ──
