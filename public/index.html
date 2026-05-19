@@ -1817,13 +1817,9 @@ function setDefaultDates() {
     const fri = new Date(mon);   fri.setDate(mon.getDate()+4);
     S.draft.periodFrom = iso(mon); S.draft.periodTo = iso(fri);
   }
-  // Set report date range to current month by default
-  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const lastOfMonth  = new Date(today.getFullYear(), today.getMonth()+1, 0);
-  const rfrom = document.getElementById('reportDateFrom');
-  const rto   = document.getElementById('reportDateTo');
-  if (rfrom && !rfrom.value) rfrom.value = iso(firstOfMonth);
-  if (rto   && !rto.value)   rto.value   = iso(lastOfMonth);
+  // Monthly report date range: intentionally left blank by default so the
+  // user sees ALL inspections in the report straight away. The Date Range
+  // filters at the top of that tab remain available as an optional filter.
 
   document.getElementById('auditDate').value    = iso(today);
   document.getElementById('auditSigDate').value = iso(today);
@@ -2998,6 +2994,31 @@ function clearReportFilters() {
   renderMonthlyReport();
 }
 
+// Delete an inspection (and any actions associated with it) after confirmation.
+// Triggered from the red ✕ button on each Monthly Report card.
+function deleteInspection(inspId){
+  const insp = S.inspections.find(i => i.id === inspId);
+  if(!insp){ showToast('Inspection not found','error'); return; }
+
+  const heading = insp.title || insp.typeName || `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`;
+  const linkedActions = S.actions.filter(a => a.inspId === inspId);
+  const actionsBit = linkedActions.length
+    ? `\n\nThis will also delete ${linkedActions.length} linked action${linkedActions.length!==1?'s':''}.`
+    : '';
+
+  if(!confirm(`Delete this inspection?\n\n"${heading}"${actionsBit}\n\nThis cannot be undone.`)) return;
+
+  S.inspections = S.inspections.filter(i => i.id !== inspId);
+  S.actions     = S.actions.filter(a => a.inspId !== inspId);
+
+  saveData();
+  renderMonthlyReport();
+  // Also refresh anything that might show counts/lists for inspections
+  if(typeof renderActions === 'function')   try { renderActions(); }   catch(e){}
+  if(typeof renderDashboard === 'function') try { renderDashboard(); } catch(e){}
+  showToast('Inspection deleted','success');
+}
+
 // Render a Monthly Report card for a form-style inspection submission
 function _renderFormReportCard(insp){
   const form = insp.formSnapshot;
@@ -3015,6 +3036,10 @@ function _renderFormReportCard(insp){
       <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center;">
         <span class="badge badge-accent">${insp.typeName||'Form'}</span>
         <span class="badge badge-success">✓ Submitted</span>
+        <button class="no-print" onclick="deleteInspection('${insp.id}')" title="Delete this submission"
+          style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:26px;height:26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;padding:0;"
+          onmouseover="this.style.background='var(--danger)';this.style.color='#fff';"
+          onmouseout="this.style.background='transparent';this.style.color='var(--danger)';">✕</button>
       </div>
     </div>
     <div class="card-body">
@@ -3244,6 +3269,10 @@ function renderMonthlyReport(){
         <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center;">
           ${typeLabel?`<span class="badge badge-accent">${typeLabel}</span>`:''}
           ${statusBadge}
+          <button class="no-print" onclick="deleteInspection('${insp.id}')" title="Delete this inspection"
+            style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:26px;height:26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;padding:0;"
+            onmouseover="this.style.background='var(--danger)';this.style.color='#fff';"
+            onmouseout="this.style.background='transparent';this.style.color='var(--danger)';">✕</button>
         </div>
       </div>
       <div class="card-body">
