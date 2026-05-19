@@ -539,7 +539,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     </div>
     <div class="action-bar no-print">
       <div class="ab-left">
-        <button class="btn btn-primary" onclick="submitInspection()">✓ Submit Inspection</button>
+        <button class="btn btn-primary" onclick="submitInspection()" title="Submits the inspection to the server and notifies the manager. The inspection stays open until the manager signs it off.">💾 Save &amp; Notify Manager</button>
         <button class="btn btn-success" id="submitAndPdfBtn" onclick="submitFormAndPDF()" style="display:none;" title="Submit and immediately save a PDF of this form for filing">📄 Submit &amp; Save PDF</button>
         <button class="btn btn-outline" onclick="startNewDraft()">＋ New Period</button>
       </div>
@@ -2445,7 +2445,7 @@ function submitInspection() {
       manager:d.manager, location:d.location,
       ref:'', freq:d.freq, generalNotes:'', title:'', inspType:''
     };
-    saveData(); updateBadge(); showToast(`✓ ${activeType.name} submitted`);
+    saveData(); updateBadge(); showToast(`✓ ${activeType.name} submitted — manager will be notified`);
     populateInspectionForm(); setTimeout(renderActiveInspectionBody, 300);
     return insp;
   }
@@ -2499,7 +2499,7 @@ function submitInspection() {
   const nextTo=new Date(nextFrom.getTime()+span);
   const iso=dt=>dt.toISOString().split('T')[0];
   S.draft={typeId:d.typeId,results:{},notes:{},actionDetails:{},rectifyDetails:{},formData:{},periodFrom:iso(nextFrom),periodTo:iso(nextTo),manager:d.manager,location:d.location,ref:'',freq:d.freq,generalNotes:''};
-  saveData(); updateBadge(); showToast('✓ Inspection submitted');
+  saveData(); updateBadge(); showToast('✓ Submitted — manager will be notified');
   populateInspectionForm(); setTimeout(renderActiveInspectionBody,300);
   return insp;
 }
