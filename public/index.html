@@ -380,6 +380,34 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
   </div>
 </div>
 
+<!-- Sign-in modal -->
+<div class="modal-bg" id="loginModal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-title">
+      <span>🔐 Sign in</span>
+      <button class="modal-close" onclick="closeLoginModal()">✕</button>
+    </div>
+    <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.5;">
+      Sign in to save inspections to the server and let the manager review them from any device.
+    </div>
+    <form id="loginForm" onsubmit="handleLoginSubmit(event)" style="display:flex;flex-direction:column;gap:12px;">
+      <div class="field-group">
+        <label class="field-label">Email</label>
+        <input type="email" id="loginEmail" required autocomplete="username" placeholder="you@yourcompany.com" autofocus>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Password</label>
+        <input type="password" id="loginPassword" required autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <div id="loginError" style="display:none;font-size:13px;padding:9px 12px;background:var(--danger-bg);border:1px solid var(--danger-brd);border-radius:6px;color:var(--danger);"></div>
+      <div class="modal-actions" style="margin-top:6px;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="closeLoginModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="loginSubmitBtn">Sign in →</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Lightbox -->
 <div class="lightbox-bg" id="lightboxBg" onclick="closeLightbox(event)">
   <div class="lightbox-inner" onclick="event.stopPropagation()">
@@ -425,6 +453,11 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     </div>
     <div class="header-right">
       <span class="save-indicator" id="saveIndicator"></span>
+      <!-- User indicator: shows current signed-in user when authenticated -->
+      <span id="userIndicator" class="no-print" style="display:none;font-size:11px;color:var(--text-muted);padding:4px 10px;background:var(--accent-light);border:1px solid var(--accent);border-radius:14px;font-weight:600;"></span>
+      <!-- Sign-in / Sign-out button -->
+      <button class="btn btn-ghost btn-sm no-print" id="signInBtn" onclick="openLoginModal()" title="Sign in to sync to the server" style="color:var(--text-muted);border-color:var(--border);display:none;">🔐 Sign in</button>
+      <button class="btn btn-ghost btn-sm no-print" id="signOutBtn" onclick="handleSignOut()" title="Sign out — switches back to local-only mode" style="color:var(--text-muted);border-color:var(--border);display:none;">Sign out</button>
       <!-- Save Folder button removed: PDFs now go straight to the browser's Downloads folder. -->
       <!-- <button class="btn btn-ghost btn-sm no-print" onclick="changeSaveFolder()" ...>📁 Save Folder</button> -->
       <button class="btn btn-ghost btn-sm no-print" onclick="resetAppData()" title="Clear all data and start fresh — useful for testing" style="color:var(--text-muted);border-color:var(--border);">🔄 Reset</button>
@@ -1682,7 +1715,8 @@ let _activeScenario = null;
 // ══════════════════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  // Local boot: always load from localStorage first so the UI renders fast
   loadData();
   setDefaultDates();
   populateInspectionForm();
@@ -1697,6 +1731,22 @@ document.addEventListener('DOMContentLoaded', () => {
   renderMyChecklist();
   renderTemplates();
   populateBrandingForm();
+
+  // ── Auth boot: see if a session cookie is still valid ──
+  // The Sign In button is shown by default; if we find a session, we
+  // swap it for the user indicator + Sign Out button and pull state.
+  document.getElementById('signInBtn').style.display = 'inline-flex';
+  try {
+    const user = await Auth.refresh();
+    if(user){
+      _updateAuthIndicator();
+      // Reload state from server (overrides local cache if server has data)
+      await loadFromServerAndRender();
+    }
+  } catch(e){
+    console.warn('Auth refresh failed:', e);
+  }
+
   // PDF save folder picker has been removed — downloads go straight to the
   // browser's Downloads folder now. restorePersistedSaveFolder() is no longer called.
   setInterval(saveData, 30000);
@@ -4102,11 +4152,19 @@ function flushDraft(){
 function saveData(){
   flushDraft();
   const payload={meta:{version:3,savedAt:new Date().toISOString(),appKey:'ahs:workplace-inspection:v3'},S};
+  // Always write to localStorage as a cache / offline fallback
   try{
     localStorage.setItem('ahs:workplace-inspection:v3',JSON.stringify(payload));
     const el=document.getElementById('saveIndicator');
     if(el) el.textContent='Saved '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
-  }catch(e){if(!_quotaWarn){_quotaWarn=true;showToast('Storage full — use Save As','error');}}
+  }catch(e){if(!_quotaWarn){_quotaWarn=true;showToast('Local storage full','error');}}
+  // If signed in, ALSO sync to server (best-effort, async)
+  if(Auth.isSignedIn() && Auth.activeTenantId()){
+    Auth.saveToServer(S).then(ok => {
+      const el=document.getElementById('saveIndicator');
+      if(el && ok) el.textContent='Saved to server '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    });
+  }
 }
 
 function loadData(){
@@ -4119,6 +4177,114 @@ function loadData(){
     if(raw){const p=JSON.parse(raw);if(p.S){S=p.S;migrateLoadedState();}}
   }catch(e){}
 }
+
+// Replace the in-memory S with state pulled from the server (used after sign-in).
+async function loadFromServerAndRender(){
+  const serverState = await Auth.loadFromServer();
+  if(serverState && typeof serverState === 'object' && Object.keys(serverState).length){
+    S = serverState;
+    migrateLoadedState();
+    // Cache locally too
+    try{ localStorage.setItem('ahs:workplace-inspection:v3', JSON.stringify({meta:{version:3,savedAt:new Date().toISOString()},S})); }catch(e){}
+    _rerenderEverything();
+    showToast('✓ Loaded from server','info');
+    return true;
+  }
+  // Server is empty: offer to push local data up (one-time migration)
+  if(localStorage.getItem('ahs:workplace-inspection:v3')){
+    if(confirm('No data found on the server for your account. Would you like to upload your local data to the server?')){
+      const ok = await Auth.saveToServer(S);
+      if(ok) showToast('✓ Local data uploaded to server','success');
+      else   showToast('Upload failed — keeping local data','error');
+    }
+  }
+  return false;
+}
+
+function _rerenderEverything(){
+  setDefaultDates();
+  populateInspectionForm();
+  renderInspectionTypeGrid();
+  renderActiveInspectionBody();
+  renderActionStats();
+  updateBadge();
+  renderAuditSections();
+  populateAuditForm();
+  renderScenarioGrid();
+  renderMyChecklist();
+  renderTemplates();
+  populateBrandingForm();
+  populateReportLocationFilter();
+  renderMonthlyReport();
+}
+
+// ── Login modal handlers ──
+function openLoginModal(){
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('loginEmail').value = '';
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('loginModal').classList.add('open');
+  setTimeout(() => document.getElementById('loginEmail').focus(), 50);
+}
+function closeLoginModal(){
+  document.getElementById('loginModal').classList.remove('open');
+}
+async function handleLoginSubmit(event){
+  event.preventDefault();
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  const btn   = document.getElementById('loginSubmitBtn');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const user = await Auth.login(email, password);
+    closeLoginModal();
+    _updateAuthIndicator();
+    showToast(`✓ Signed in as ${user.email}`, 'success');
+    // Load server state
+    await loadFromServerAndRender();
+  } catch(err){
+    errEl.textContent = err.body?.error === 'invalid_credentials'
+      ? 'Wrong email or password — please try again.'
+      : `Sign-in failed: ${err.message}`;
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in →';
+  }
+}
+async function handleSignOut(){
+  if(!confirm('Sign out? Your local data stays on this device but new saves won\'t sync to the server.')) return;
+  await Auth.logout();
+  _updateAuthIndicator();
+  showToast('Signed out','info');
+}
+function _updateAuthIndicator(){
+  const inBtn  = document.getElementById('signInBtn');
+  const outBtn = document.getElementById('signOutBtn');
+  const ind    = document.getElementById('userIndicator');
+  const user = Auth.user();
+  if(user){
+    if(inBtn)  inBtn.style.display  = 'none';
+    if(outBtn) outBtn.style.display = 'inline-flex';
+    if(ind){
+      ind.style.display = 'inline-flex';
+      const tenantBit = user.tenantName ? ` · ${user.tenantName}` : (user.role === 'consultant' ? ' · consultant' : '');
+      ind.textContent = `🔐 ${user.name || user.email}${tenantBit}`;
+    }
+  } else {
+    if(inBtn)  inBtn.style.display  = 'inline-flex';
+    if(outBtn) outBtn.style.display = 'none';
+    if(ind)    ind.style.display    = 'none';
+  }
+}
+// Close login modal on background click
+document.addEventListener('DOMContentLoaded', () => {
+  const lm = document.getElementById('loginModal');
+  if(lm) lm.addEventListener('click', e => { if(e.target === lm) closeLoginModal(); });
+});
 
 // Migrate loaded state from older save formats. Idempotent — safe to call on already-current state.
 function migrateLoadedState(){
@@ -6074,6 +6240,112 @@ function resetAppData(){
   saveData();
   showToast('✓ App reset — all fields cleared, fresh slate', 'info');
 }
+
+// ══════════════════════════════════════════════════════════════
+//  AUTH + SERVER SYNC
+//  ─────────────────────────────────────────────────────────────
+//  Optional layer on top of the existing localStorage app.
+//
+//  - When signed in: state is loaded from / saved to the server.
+//  - When NOT signed in: app falls back to localStorage (existing behaviour).
+//  - Sign-in flow uses the /api/auth endpoints; session is a cookie.
+//
+//  This lets the same app work for:
+//    * Local testing without a server (anonymous)
+//    * A signed-in client (Easy Travel manager) with permanent storage
+//    * A signed-in consultant (Simon) with multi-tenant access
+// ══════════════════════════════════════════════════════════════
+const Auth = (() => {
+  let _currentUser = null;          // {id, email, role, tenantId, tenantName, name} or null
+  let _activeTenantId = null;       // for consultants: which tenant they're viewing
+  let _syncInFlight = null;         // promise of in-flight save, for debounce
+
+  async function _api(path, opts={}){
+    const res = await fetch(path, {
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(opts.headers||{}) },
+      ...opts
+    });
+    const body = await res.json().catch(() => ({}));
+    if(!res.ok){
+      const err = new Error(body.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.body   = body;
+      throw err;
+    }
+    return body;
+  }
+
+  async function login(email, password){
+    const { user } = await _api('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+    _currentUser = user;
+    _activeTenantId = user.tenantId; // client_user has their own tenant; consultant has null until they pick
+    return user;
+  }
+
+  async function logout(){
+    try { await _api('/api/auth/logout', { method: 'POST' }); } catch(e){}
+    _currentUser = null;
+    _activeTenantId = null;
+  }
+
+  async function refresh(){
+    // Called on page load. Returns the user if a valid session cookie exists.
+    try {
+      const { user } = await _api('/api/auth/me');
+      _currentUser = user;
+      _activeTenantId = user.tenantId;
+      return user;
+    } catch(e){
+      _currentUser = null;
+      return null;
+    }
+  }
+
+  function user(){ return _currentUser; }
+  function isSignedIn(){ return !!_currentUser; }
+  function activeTenantId(){ return _activeTenantId; }
+  function setActiveTenant(id){ _activeTenantId = id; }
+
+  async function loadFromServer(){
+    if(!_currentUser) return null;
+    const tenantId = _activeTenantId;
+    if(!tenantId) return null;        // consultant hasn't picked a tenant yet
+    try {
+      const r = await _api(`/api/state?tenantId=${encodeURIComponent(tenantId)}`);
+      return r.state; // may be null if server has no state yet
+    } catch(e){
+      console.warn('Failed to load state from server:', e);
+      return null;
+    }
+  }
+
+  async function saveToServer(state){
+    if(!_currentUser) return false;
+    const tenantId = _activeTenantId;
+    if(!tenantId) return false;
+    // Debounce concurrent saves
+    if(_syncInFlight) await _syncInFlight.catch(()=>{});
+    _syncInFlight = _api('/api/state', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId, state })
+    });
+    try {
+      await _syncInFlight;
+      return true;
+    } catch(e){
+      console.warn('Failed to save state to server:', e);
+      return false;
+    } finally {
+      _syncInFlight = null;
+    }
+  }
+
+  return { login, logout, refresh, user, isSignedIn, activeTenantId, setActiveTenant, loadFromServer, saveToServer };
+})();
 
 let _toastTimer=null;
 function showToast(msg,type='success'){
