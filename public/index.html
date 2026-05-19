@@ -5780,23 +5780,85 @@ function generatePDF(){
         return; // Form-style — skip the checklist breakdown that follows
       }
 
-      // Results tally by section
+      // ── FULL CHECKLIST BREAKDOWN ──
+      // Show every single item with its status — this is the actual compliance
+      // record. Without this, the client only sees the things that went wrong,
+      // not the (typically much larger) list of things they got right.
       insp.checklistSnapshot?.forEach(sec=>{
         const secPass=sec.items.filter(i=>insp.results[i.id]==='pass').length;
         const secRect=sec.items.filter(i=>insp.results[i.id]==='rectified').length;
         const secAct=sec.items.filter(i=>insp.results[i.id]==='action').length;
         const secNA=sec.items.filter(i=>insp.results[i.id]==='na').length;
-        checkNewPage(7);
-        setFont('bold',8,C.primary);
-        doc.text(sec.name,ML+2,y);
-        setFont('normal',7,C.success);
-        doc.text(`${secPass} Pass`,ML+72,y,{align:'right'});
-        if(secRect>0){setFont('bold',7,[6,95,70]);doc.text(`${secRect} Rectified`,ML+93,y,{align:'right'});}
-        if(secAct>0){setFont('bold',7,C.warning);doc.text(`${secAct} Action`,ML+110,y,{align:'right'});}
-        if(secNA>0){setFont('normal',7,C.muted);doc.text(`${secNA} N/A`,ML+CW,y,{align:'right'});}
-        doc.setDrawColor(...C.border);
-        doc.line(ML,y+1.5,ML+CW,y+1.5);
-        y+=6;
+
+        // Section header bar
+        checkNewPage(12);
+        doc.setFillColor(...C.primary);
+        doc.rect(ML, y, CW, 7, 'F');
+        doc.setFillColor(...C.cyan);
+        doc.rect(ML, y, 2.5, 7, 'F');
+        setFont('bold', 8, C.white);
+        doc.text(sec.name, ML+5, y+5);
+        // Compact counts on the right
+        setFont('normal', 7, C.cyanLight);
+        const counts = [];
+        if(secPass>0) counts.push(`${secPass}✓`);
+        if(secRect>0) counts.push(`${secRect}✔`);
+        if(secAct>0)  counts.push(`${secAct}⚠`);
+        if(secNA>0)   counts.push(`${secNA}—`);
+        doc.text(counts.join('  '), ML+CW-3, y+5, {align:'right'});
+        y += 9;
+
+        // Per-item rows
+        if(!sec.items.length){
+          setFont('italic', 7, C.muted);
+          doc.text('(no items in this section)', ML+5, y);
+          y += 5;
+          return;
+        }
+        sec.items.forEach(item => {
+          const status = insp.results?.[item.id] || '';
+          // Determine icon + colour based on status
+          let icon, iconColor, statusLabel;
+          switch(status){
+            case 'pass':      icon='✓'; iconColor=C.success;   statusLabel='Pass';      break;
+            case 'rectified': icon='✔'; iconColor=[6,95,70];   statusLabel='Rectified'; break;
+            case 'action':    icon='⚠'; iconColor=C.warning;   statusLabel='Action';    break;
+            case 'na':        icon='—'; iconColor=C.muted;     statusLabel='N/A';       break;
+            default:          icon='○'; iconColor=C.danger;    statusLabel='Not done';  break;
+          }
+          // Indicator icons: 💬 if note, 📷 if action photos (compact: just chars)
+          const hasNote   = !!(insp.notes?.[item.id]?.trim());
+          const hasPhotos = !!(insp.actionDetails?.[item.id]?.beforePhotos?.length);
+          const indicators = (hasNote ? ' 💬' : '') + (hasPhotos ? ' 📷' : '');
+
+          // Wrap the item name to fit (leaving room for icon and status label on right)
+          const labelW = doc.getTextWidth(statusLabel) + 3;
+          const nameMaxW = CW - 14 - labelW;
+          const nameLines = doc.splitTextToSize(item.name + indicators, nameMaxW);
+          const rowH = Math.max(5, nameLines.length * 4 + 1.5);
+          checkNewPage(rowH + 1);
+
+          // Alternating row background for readability
+          if((sec.items.indexOf(item) % 2) === 0){
+            doc.setFillColor(...C.mutedBg);
+            doc.rect(ML, y, CW, rowH, 'F');
+          }
+
+          // Status icon
+          setFont('bold', 10, iconColor);
+          doc.text(icon, ML+4, y+4);
+
+          // Item name (wrapped)
+          setFont('normal', 8, C.charcoal);
+          doc.text(nameLines, ML+10, y+4);
+
+          // Status label at right
+          setFont('bold', 7, iconColor);
+          doc.text(statusLabel.toUpperCase(), ML+CW-3, y+4, {align:'right'});
+
+          y += rowH;
+        });
+        y += 3; // gap before next section
       });
 
       // Rectified on site items
