@@ -1585,9 +1585,9 @@ const FORMS = {
         id: 'site',
         name: 'Site Information',
         fields: [
-          { id:'site_address', type:'instruction', content:'Easy Garage Services\nWhitehall Road Industrial Estate\nAshfield Close\nLS12 5JB' },
-          { id:'conducted_on', type:'datetime', label:'Conducted on', required:true },
-          { id:'operative',    type:'text',     label:'Easy Garage Services Operative', required:true }
+          { id:'site_address', type:'instruction', content:'Easy Garage Services · Whitehall Road Industrial Estate · Ashfield Close · LS12 5JB' },
+          { id:'conducted_on', type:'datetime', label:'Conducted on', required:true, halfWidth:true },
+          { id:'operative',    type:'text',     label:'Easy Garage Services Operative', required:true, halfWidth:true }
         ]
       },
       {
@@ -1619,10 +1619,9 @@ const FORMS = {
         id: 'signoff',
         name: 'Driver Sign-off',
         fields: [
-          { id:'driver_name', type:'text',      label:"Delivery Driver's Name", required:true },
-          { id:'signature',   type:'signature', label:'Driver signature', required:true },
-          { id:'sig_date',    type:'date',      label:'Date', required:true },
-          { id:'notify_note', type:'instruction', content:'This induction will be filed for the named driver. AHS recommends keeping records for at least 12 months.' }
+          { id:'driver_name', type:'text',      label:"Delivery Driver's Name", required:true, halfWidth:true },
+          { id:'sig_date',    type:'date',      label:'Date',                   required:true, halfWidth:true },
+          { id:'signature',   type:'signature', label:'Driver signature',       required:true }
         ]
       }
     ]
@@ -1934,11 +1933,26 @@ function renderForm() {
 
     let html = `<div class="card-band"><h3><span class="dot">●</span> ${sec.name}</h3></div><div class="card-body" style="display:flex;flex-direction:column;gap:14px;">`;
 
-    sec.fields.forEach(f => {
+    // Walk with an index so we can pair adjacent halfWidth fields onto one row.
+    let pendingRow = null;
+    for(let fi = 0; fi < sec.fields.length; fi++){
+      const f = sec.fields[fi];
       const visible = _isFieldVisible(f, data);
-      const wrapStyle = visible ? '' : 'display:none;';
-      html += `<div class="form-field-wrap" id="ffw-${f.id}" data-fieldid="${f.id}" style="${wrapStyle}">${renderFormField(f, data)}</div>`;
-    });
+      const wrapStyleBase = visible ? '' : 'display:none;';
+      const next = sec.fields[fi+1];
+      // Two halfWidth siblings → wrap them in a side-by-side grid
+      if(f.halfWidth && next && next.halfWidth){
+        const nextVisible = _isFieldVisible(next, data);
+        const rowStyle = (!visible && !nextVisible) ? 'display:none;' : '';
+        html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;${rowStyle}">
+          <div class="form-field-wrap" id="ffw-${f.id}" data-fieldid="${f.id}" style="${wrapStyleBase}">${renderFormField(f, data)}</div>
+          <div class="form-field-wrap" id="ffw-${next.id}" data-fieldid="${next.id}" style="${nextVisible?'':'display:none;'}">${renderFormField(next, data)}</div>
+        </div>`;
+        fi++; // consumed lookahead
+        continue;
+      }
+      html += `<div class="form-field-wrap" id="ffw-${f.id}" data-fieldid="${f.id}" style="${wrapStyleBase}">${renderFormField(f, data)}</div>`;
+    }
 
     html += '</div>';
     card.innerHTML = html;
@@ -5241,42 +5255,80 @@ function generateSingleFormPDF(insp){
     doc.text(sec.name, ML+6, y+4.7);
     y += 9;
 
-    sec.fields.forEach(f => {
+    // Renders a single "simple" field (text/date/datetime/select/checkbox)
+    // at an arbitrary x position with an arbitrary width. Returns the bottom-Y.
+    // Used by both the full-width path and the paired half-width path.
+    const renderSimpleField = (f, xStart, width, startY) => {
+      const v = data[f.id];
+      const blank = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+      let yy = startY;
+      setFont('bold',7,C.muted);
+      doc.text((f.label||f.id).toUpperCase(), xStart, yy);
+      yy += 4;
+      if(blank){
+        setFont('italic',8,C.muted);
+        doc.text('— not answered —', xStart, yy);
+        return yy + 6;
+      }
+      let valueStr = '';
+      if(f.type === 'select') valueStr = ((f.options||[]).find(o=>o.value===v)?.label) || String(v);
+      else if(f.type === 'checkbox') valueStr = v ? 'Yes' : 'No';
+      else if(f.type === 'date') valueStr = fmtDate(v);
+      else if(f.type === 'datetime') {
+        try { valueStr = new Date(v).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
+        catch(e){ valueStr = String(v); }
+      }
+      else valueStr = String(v);
+      setFont('normal',9,C.charcoal);
+      const valLines = doc.splitTextToSize(valueStr, width);
+      valLines.forEach(line => { doc.text(line, xStart, yy); yy += 4.5; });
+      return yy + 2;
+    };
+    const isSimpleType = t => ['text','date','datetime','select','checkbox'].includes(t);
+
+    // Iterate with an index so we can look ahead and pair half-width fields.
+    for(let i = 0; i < sec.fields.length; i++){
+      const f = sec.fields[i];
+
       // ── Instruction: read-only informational block ─────────────────
       if(f.type === 'instruction'){
         const lines = doc.splitTextToSize(f.content||'', CW-10);
-        const blockH = lines.length*4 + 6;
+        // Use single-line height when there's only one line so the address
+        // strip renders as a slim band instead of a big card.
+        const lineH = lines.length === 1 ? 5 : 4;
+        const blockH = lines.length*lineH + 5;
         checkNewPage(blockH+2);
         doc.setFillColor(...C.accentLight);
         doc.rect(ML, y, CW, blockH, 'F');
         doc.setFillColor(...C.accent);
         doc.rect(ML, y, 2.5, blockH, 'F');
         setFont('normal',8,C.charcoal);
-        doc.text(lines, ML+6, y+5);
-        y += blockH + 3;
-        return;
+        doc.text(lines, ML+6, y + (lines.length === 1 ? 4 : 5));
+        y += blockH + 2;
+        continue;
       }
 
       // ── Checklist: bulleted briefing points rendered as TICKED boxes ─
       // Two-column layout so 16-ish points fit a single page comfortably,
-      // with bigger text (8.5pt) and a brand-coloured tick next to each.
+      // with a brand-coloured filled box and a hand-drawn ✓ tick (jsPDF's
+      // built-in helvetica doesn't render the unicode ✓ glyph reliably).
       if(f.type === 'checklist'){
         const items = Array.isArray(f.items) ? f.items : [];
-        if(!items.length) return;
+        if(!items.length) continue;
 
         const cols       = 2;
-        const colGap     = 4;                                  // mm between cols
-        const innerPad   = 6;                                  // mm inside container
-        const labelH     = f.label ? 6 : 0;                    // label row
+        const colGap     = 4;
+        const innerPad   = 6;
+        const labelH     = f.label ? 5 : 0;
         const colWidth   = (CW - innerPad*2 - colGap*(cols-1)) / cols;
-        const boxSize    = 3;                                  // tick box edge (mm)
-        const textIndent = boxSize + 2.6;                      // gap between box and text
+        const boxSize    = 3;
+        const textIndent = boxSize + 2.4;
         const textMaxW   = colWidth - textIndent - 1;
-        const lineH      = 4.4;                                // mm per text line
-        const rowGap     = 1.6;                                // gap between items
+        const lineH      = 3.9;
+        const rowGap     = 1.0;
 
         // Pre-wrap every item and compute the height it occupies.
-        setFont('normal',8.5,C.charcoal);
+        setFont('normal',8,C.charcoal);
         const wrapped = items.map(it => doc.splitTextToSize(String(it||''), textMaxW));
         const itemHeights = wrapped.map(w => w.length * lineH);
 
@@ -5286,17 +5338,16 @@ function generateSingleFormPDF(insp){
         const columnsAlloc = Array.from({length:cols}, () => ({items:[], height:0}));
         let cIdx = 0;
         items.forEach((_, i) => {
-          // Move to next column once we've passed the target height (greedy)
           if(cIdx < cols-1 && columnsAlloc[cIdx].height + itemHeights[i] > targetColH){
             cIdx++;
           }
           columnsAlloc[cIdx].items.push(i);
           columnsAlloc[cIdx].height += itemHeights[i] + rowGap;
         });
-        const blockBodyH = Math.max(...columnsAlloc.map(c => c.height)) + 4;
-        const blockH = labelH + blockBodyH + 6;
+        const blockBodyH = Math.max(...columnsAlloc.map(c => c.height)) + 3;
+        const blockH = labelH + blockBodyH + 4;
 
-        checkNewPage(blockH + 4);
+        checkNewPage(blockH + 3);
 
         // Container
         doc.setFillColor(...C.accentLight);
@@ -5306,80 +5357,93 @@ function generateSingleFormPDF(insp){
 
         if(f.label){
           setFont('bold',7,C.info);
-          doc.text(String(f.label).toUpperCase(), ML+6, y+5);
+          doc.text(String(f.label).toUpperCase(), ML+6, y+4);
         }
 
         // Draw each column
-        const bodyTop = y + labelH + 4;
+        const bodyTop = y + labelH + 3;
         columnsAlloc.forEach((col, ci) => {
           const colX = ML + innerPad + ci*(colWidth + colGap);
-          let cy = bodyTop + 2.6;
+          let cy = bodyTop + 2.4;
           col.items.forEach(idx => {
             const lines = wrapped[idx];
-            // Tick box
+            // Tick-box fill (brand accent)
+            const boxTop = cy - boxSize + 0.4;
             doc.setFillColor(...C.accent);
-            doc.rect(colX, cy - boxSize + 0.4, boxSize, boxSize, 'F');
-            setFont('bold',6.5,C.white);
-            doc.text('✓', colX + boxSize/2, cy - 0.3, {align:'center'});
+            doc.rect(colX, boxTop, boxSize, boxSize, 'F');
+            // Hand-drawn check-mark using two line segments inside the box.
+            // Coordinates are relative to the box top-left (colX, boxTop).
+            doc.setDrawColor(255,255,255);
+            doc.setLineWidth(0.55);
+            doc.setLineCap('round');
+            doc.setLineJoin('round');
+            doc.line(colX + 0.55,        boxTop + 1.55,  colX + 1.25,        boxTop + 2.25);
+            doc.line(colX + 1.25,        boxTop + 2.25,  colX + 2.55,        boxTop + 0.85);
             // Item text
-            setFont('normal',8.5,C.charcoal);
-            doc.text(lines, colX + textIndent, cy, {lineHeightFactor:1.2});
+            setFont('normal',8,C.charcoal);
+            doc.text(lines, colX + textIndent, cy, {lineHeightFactor:1.18});
             cy += lines.length*lineH + rowGap;
           });
         });
-        y += blockH + 3;
-        return;
+        // Reset line width so other rectangles aren't accidentally thicker
+        doc.setLineWidth(0.2);
+        y += blockH + 2;
+        continue;
       }
 
       // ── Disclaimer: acknowledgment / consent block ────────────────
-      // Styled prominently so it reads as a legal-context note. The user's
-      // signature in the section below records the acknowledgment.
       if(f.type === 'disclaimer'){
         const txt = f.content || '';
-        setFont('italic',9,[120,53,15]);                // amber-dark
+        setFont('italic',9,[120,53,15]);
         const lines = doc.splitTextToSize(txt, CW-14);
-        const headerH = 6;
-        const blockH = headerH + lines.length*4.6 + 6;
-        checkNewPage(blockH + 4);
-        doc.setFillColor(255,251,235);                  // amber-light bg
+        const headerH = 5;
+        const blockH = headerH + lines.length*4.4 + 5;
+        checkNewPage(blockH + 3);
+        doc.setFillColor(255,251,235);
         doc.rect(ML, y, CW, blockH, 'F');
-        doc.setDrawColor(245,158,11);                   // amber border
+        doc.setDrawColor(245,158,11);
         doc.rect(ML, y, CW, blockH);
         doc.setFillColor(245,158,11);
         doc.rect(ML, y, 3, blockH, 'F');
         setFont('bold',7,[146,64,14]);
-        doc.text('ACKNOWLEDGMENT', ML+7, y+4.5);
+        doc.text('ACKNOWLEDGMENT', ML+7, y+4);
         setFont('italic',9,[120,53,15]);
-        doc.text(lines, ML+7, y + headerH + 4, {lineHeightFactor:1.3});
-        y += blockH + 4;
-        return;
+        doc.text(lines, ML+7, y + headerH + 4, {lineHeightFactor:1.25});
+        y += blockH + 3;
+        continue;
       }
 
       // Skip hidden fields
-      if(!_isFieldVisible(f, data)) return;
+      if(!_isFieldVisible(f, data)) continue;
 
-      const v = data[f.id];
-      const blank = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
-
-      // Field label
-      checkNewPage(10);
-      setFont('bold',7,C.muted);
-      doc.text((f.label||f.id).toUpperCase(), ML+2, y);
-      y += 4;
-
-      // Field value
-      if(blank){
-        setFont('italic',8,C.muted);
-        doc.text('— not answered —', ML+2, y);
-        y += 6;
-        return;
+      // ── Half-width pairing — two adjacent simple fields share one row ──
+      if(f.halfWidth && isSimpleType(f.type)){
+        const next = sec.fields[i+1];
+        if(next && next.halfWidth && isSimpleType(next.type) && _isFieldVisible(next, data)){
+          checkNewPage(12);
+          const halfW = (CW - 6) / 2;
+          const yLeft  = renderSimpleField(f,    ML+2,                  halfW-2, y);
+          const yRight = renderSimpleField(next, ML+2 + halfW + 2,      halfW-2, y);
+          y = Math.max(yLeft, yRight);
+          i++; // consumed the look-ahead field too
+          continue;
+        }
       }
 
       if(f.type === 'signature'){
-        checkNewPage(22);
+        const v = data[f.id];
+        const blank = v === undefined || v === null || v === '';
+        checkNewPage(24);
+        setFont('bold',7,C.muted);
+        doc.text((f.label||f.id).toUpperCase(), ML+2, y);
+        y += 4;
+        if(blank){
+          setFont('italic',8,C.muted);
+          doc.text('— not answered —', ML+2, y);
+          y += 6;
+          continue;
+        }
         try {
-          // Render the signature image — slightly more compact so the
-          // whole form fits a single page where possible.
           const sigW = 70, sigH = 18;
           doc.setDrawColor(...C.border);
           doc.rect(ML+2, y, sigW, sigH);
@@ -5389,17 +5453,28 @@ function generateSingleFormPDF(insp){
           }
         } catch(e){}
         y += 20;
-        return;
+        continue;
       }
 
       if(f.type === 'photo'){
+        const v = data[f.id];
+        const blank = !v || (Array.isArray(v) && !v.length);
+        setFont('bold',7,C.muted);
+        doc.text((f.label||f.id).toUpperCase(), ML+2, y);
+        y += 4;
+        if(blank){
+          setFont('italic',8,C.muted);
+          doc.text('— not answered —', ML+2, y);
+          y += 6;
+          continue;
+        }
         const arr = Array.isArray(v) ? v : [v];
-        const PHOTO = 28; const GAP = 3; const MAX_PER_ROW = 4;
+        const PHOTO = 28, GAP = 3, MAX_PER_ROW = 4;
         const rows = Math.ceil(arr.length/MAX_PER_ROW);
         checkNewPage(rows*(PHOTO+GAP) + 4);
         let px = ML+2, py = y;
-        arr.forEach((src, i) => {
-          if(i>0 && i%MAX_PER_ROW===0){ px = ML+2; py += PHOTO+GAP; }
+        arr.forEach((src, idx) => {
+          if(idx>0 && idx%MAX_PER_ROW===0){ px = ML+2; py += PHOTO+GAP; }
           try {
             const parts = String(src).match(/^data:image\/(jpeg|jpg|png|gif|webp);base64,(.+)$/i);
             if(parts){
@@ -5412,31 +5487,15 @@ function generateSingleFormPDF(insp){
           px += PHOTO+GAP;
         });
         y = py + PHOTO + 4;
-        return;
+        continue;
       }
 
-      // Text-like values
-      let valueStr = '';
-      if(f.type === 'select') valueStr = ((f.options||[]).find(o=>o.value===v)?.label) || String(v);
-      else if(f.type === 'checkbox') valueStr = v ? '✓ Yes' : 'No';
-      else if(f.type === 'date') valueStr = fmtDate(v);
-      else if(f.type === 'datetime') {
-        try { valueStr = new Date(v).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
-        catch(e){ valueStr = String(v); }
-      }
-      else valueStr = String(v);
+      // Fallback: simple text-like field, full width
+      checkNewPage(10);
+      y = renderSimpleField(f, ML+2, CW-6, y);
+    }
 
-      setFont('normal',9,C.charcoal);
-      const valLines = doc.splitTextToSize(valueStr, CW-6);
-      valLines.forEach(line => {
-        checkNewPage(6);
-        doc.text(line, ML+2, y);
-        y += 4.5;
-      });
-      y += 2;
-    });
-
-    y += 3;
+    y += 2;
   });
 
   if(insp.generalNotes){
