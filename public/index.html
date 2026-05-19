@@ -1562,15 +1562,15 @@ const FORMS = {
         id: 'main',
         name: 'Title Page',
         fields: [
-          { id:'completed_on',      type:'datetime', label:'Completed on', required:true },
-          { id:'employee_name',     type:'text',     label:'Employee Name', required:true },
-          { id:'lateness_arrival',  type:'datetime', label:'Date of lateness and time of arrival', required:true },
-          { id:'contracted_start',  type:'text',     label:'Contracted start time of employee', required:true, placeholder:'e.g. 08:00' },
+          { id:'completed_on',      type:'datetime', label:'Completed on', required:true, halfWidth:true },
+          { id:'employee_name',     type:'text',     label:'Employee Name', required:true, halfWidth:true },
+          { id:'lateness_arrival',  type:'datetime', label:'Date of lateness and time of arrival', required:true, halfWidth:true },
+          { id:'contracted_start',  type:'text',     label:'Contracted start time of employee', required:true, placeholder:'e.g. 08:00', halfWidth:true },
           { id:'reason',            type:'textarea', label:'Reason for late arrival', required:true },
           { id:'support_needed',    type:'select',   label:'Does the employee require any support with this matter?', required:true, options:YES_NO_NA },
           { id:'support_evidence',  type:'photo',    label:'Evidence (photo)', showIf:{field:'support_needed', equals:'yes'} },
-          { id:'signed',            type:'signature',label:'Signed', required:true },
-          { id:'signed_date',       type:'date',     label:'Date signed', required:true }
+          { id:'signed_date',       type:'date',     label:'Date signed', required:true },
+          { id:'signed',            type:'signature',label:'Signed', required:true }
         ]
       }
     ]
@@ -1636,8 +1636,8 @@ const FORMS = {
         id: 'title',
         name: 'Title Page',
         fields: [
-          { id:'conducted_on',  type:'datetime', label:'Conducted on', required:true },
-          { id:'employee_name', type:'text',     label:'Name of employee returning to work', required:true },
+          { id:'conducted_on',  type:'datetime', label:'Conducted on', required:true, halfWidth:true },
+          { id:'employee_name', type:'text',     label:'Name of employee returning to work', required:true, halfWidth:true },
           { id:'department',    type:'select',   label:'Department', required:true, options:[
             {value:'garage',    label:'Garage'},
             {value:'transport', label:'Transport Office'},
@@ -1649,8 +1649,8 @@ const FORMS = {
         id: 'dates',
         name: 'Dates Of Absence',
         fields: [
-          { id:'first_day',   type:'date', label:'First Day Of Absence', required:true },
-          { id:'last_day',    type:'date', label:'Last Day Of Absence',  required:true },
+          { id:'first_day',   type:'date', label:'First Day Of Absence', required:true, halfWidth:true },
+          { id:'last_day',    type:'date', label:'Last Day Of Absence',  required:true, halfWidth:true },
           { id:'return_date', type:'date', label:'Return To Work Date',  required:true }
         ]
       },
@@ -1659,8 +1659,8 @@ const FORMS = {
         name: 'Contacting The Company',
         fields: [
           { id:'contacted',         type:'select',   label:'Did You Contact The Company At Commencement Of Your Absence?', required:true, options:YES_NO_NA },
-          { id:'contact_datetime',  type:'datetime', label:'1.0 — What date and time did you contact the company?', required:true, showIf:{field:'contacted', equals:'yes'} },
-          { id:'contact_who',       type:'text',     label:'1.1 — Who did you speak to?', required:true, showIf:{field:'contacted', equals:'yes'} },
+          { id:'contact_datetime',  type:'datetime', label:'1.0 — What date and time did you contact the company?', required:true, showIf:{field:'contacted', equals:'yes'}, halfWidth:true },
+          { id:'contact_who',       type:'text',     label:'1.1 — Who did you speak to?', required:true, showIf:{field:'contacted', equals:'yes'}, halfWidth:true },
           { id:'no_contact_reason', type:'textarea', label:'1.2 — Reason for not making contact?', required:true, showIf:{field:'contacted', equals:'no'} }
         ]
       },
@@ -5180,16 +5180,23 @@ function generateSingleFormPDF(insp){
       setFont('bold',9,C.primary);
       doc.text(getInitials(brandName)||'?', ML+9, 18, {align:'center'});
     }
-    // Brand name + tagline
+    // Brand name + tagline — truncate if too long so they don't crash into the form title on the right
+    const leftMaxW = PW/2 - ML - 22 - 4;
     setFont('bold',12,C.white);
-    doc.text(brandName, ML+22, 14);
+    const brandNameLine = doc.splitTextToSize(brandName, leftMaxW)[0] || brandName;
+    doc.text(brandNameLine, ML+22, 14);
     setFont('normal',8,hexToRgbLight(brandAccent,0.5));
-    doc.text(brandTagline, ML+22, 19);
-    // Form title right
+    const brandTaglineLine = doc.splitTextToSize(brandTagline, leftMaxW)[0] || brandTagline;
+    doc.text(brandTaglineLine, ML+22, 19);
+    // Form title right — clip to a sensible right-side width
+    const rightMaxW = PW/2 - MR - 4;
     setFont('bold',11,C.white);
-    doc.text(insp.typeName||'Form Submission', PW-MR, 14, {align:'right'});
+    const typeNameLine = doc.splitTextToSize(insp.typeName||'Form Submission', rightMaxW)[0] || (insp.typeName||'Form Submission');
+    doc.text(typeNameLine, PW-MR, 14, {align:'right'});
     setFont('normal',8,hexToRgbLight(brandAccent,0.5));
-    doc.text(insp.title && insp.title !== insp.typeName ? insp.title : 'Record', PW-MR, 19, {align:'right'});
+    const titleSrc = (insp.title && insp.title !== insp.typeName) ? insp.title : 'Record';
+    const titleLine = doc.splitTextToSize(titleSrc, rightMaxW)[0] || titleSrc;
+    doc.text(titleLine, PW-MR, 19, {align:'right'});
     y = 38;
   };
 
@@ -5218,42 +5225,52 @@ function generateSingleFormPDF(insp){
   // ── First page ──
   addHeaderBand();
 
-  // Meta block
+  // Meta block — 4-column header with auto-growing height so long values
+  // (e.g. tenant names like "Easy Travel Leeds Workshop & Depot") wrap
+  // inside their cell instead of being clipped to a single line.
   const meta = [
     {label:'Submitted by',  value:insp.manager||'—'},
     {label:'Location',      value:insp.location||'—'},
     {label:'Date',          value:fmtDate(insp.periodTo)},
     {label:'Reference',     value:insp.ref||'—'}
   ];
-  doc.setFillColor(...C.mutedBg);
-  doc.rect(ML, y, CW, 18, 'F');
-  doc.setDrawColor(...C.border);
-  doc.rect(ML, y, CW, 18);
-  doc.setFillColor(...C.accent);
-  doc.rect(ML, y, 3, 18, 'F');
   const colW = (CW-6)/4;
+  // Pre-wrap each value and compute the max line count to size the band.
+  setFont('bold',9,C.charcoal);
+  const metaWrapped = meta.map(m => doc.splitTextToSize(String(m.value||'—'), colW-3));
+  const metaLines = metaWrapped.reduce((max, w) => Math.max(max, w.length), 1);
+  const metaH = 8 + metaLines*4 + 2;        // label row + value lines + padding
+
+  doc.setFillColor(...C.mutedBg);
+  doc.rect(ML, y, CW, metaH, 'F');
+  doc.setDrawColor(...C.border);
+  doc.rect(ML, y, CW, metaH);
+  doc.setFillColor(...C.accent);
+  doc.rect(ML, y, 3, metaH, 'F');
+
   meta.forEach((m,i) => {
     const x = ML+6 + i*colW;
     setFont('bold',7,C.muted);
-    doc.text(m.label.toUpperCase(), x, y+6);
+    doc.text(m.label.toUpperCase(), x, y+5);
     setFont('bold',9,C.charcoal);
-    const lines = doc.splitTextToSize(String(m.value||'—'), colW-3);
-    doc.text(lines[0]||'—', x, y+13);
+    doc.text(metaWrapped[i], x, y+11, {lineHeightFactor:1.2});
   });
-  y += 24;
+  y += metaH + 5;
 
   // ── Sections + fields ──
   const data = insp.formData||{};
   insp.formSnapshot.sections.forEach(sec => {
-    // Section heading — compact bar
-    checkNewPage(12);
+    // Section heading — same bar style as the bulk report (8mm tall, brand
+    // primary background, accent left stripe). Reserve enough room for the
+    // heading AND at least one field so we don't orphan it at page bottom.
+    checkNewPage(30);
     doc.setFillColor(...C.primary);
-    doc.rect(ML, y, CW, 6.5, 'F');
+    doc.rect(ML, y, CW, 8, 'F');
     doc.setFillColor(...C.accent);
-    doc.rect(ML, y, 3, 6.5, 'F');
+    doc.rect(ML, y, 3, 8, 'F');
     setFont('bold',9,C.white);
-    doc.text(sec.name, ML+6, y+4.7);
-    y += 9;
+    doc.text(sec.name, ML+6, y+5.4);
+    y += 11;
 
     // Renders a single "simple" field (text/date/datetime/select/checkbox)
     // at an arbitrary x position with an arbitrary width. Returns the bottom-Y.
@@ -5420,8 +5437,23 @@ function generateSingleFormPDF(insp){
       if(f.halfWidth && isSimpleType(f.type)){
         const next = sec.fields[i+1];
         if(next && next.halfWidth && isSimpleType(next.type) && _isFieldVisible(next, data)){
-          checkNewPage(12);
+          // Pre-measure both sides so we reserve enough page space.
           const halfW = (CW - 6) / 2;
+          const measure = (fld) => {
+            const v = data[fld.id];
+            if(v === undefined || v === null || v === '') return 11;     // label + "— not answered —"
+            let valStr;
+            if(fld.type === 'select') valStr = ((fld.options||[]).find(o=>o.value===v)?.label) || String(v);
+            else if(fld.type === 'checkbox') valStr = v ? 'Yes' : 'No';
+            else if(fld.type === 'date') valStr = fmtDate(v);
+            else if(fld.type === 'datetime'){ try { valStr = new Date(v).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); } catch(e){ valStr = String(v); } }
+            else valStr = String(v);
+            setFont('normal',9,C.charcoal);
+            const lines = doc.splitTextToSize(valStr, halfW-2);
+            return 4 + lines.length*4.5 + 2;
+          };
+          const rowH = Math.max(measure(f), measure(next));
+          checkNewPage(rowH + 2);
           const yLeft  = renderSimpleField(f,    ML+2,                  halfW-2, y);
           const yRight = renderSimpleField(next, ML+2 + halfW + 2,      halfW-2, y);
           y = Math.max(yLeft, yRight);
@@ -5499,15 +5531,19 @@ function generateSingleFormPDF(insp){
   });
 
   if(insp.generalNotes){
-    checkNewPage(20);
-    doc.setFillColor(...C.mutedBg);
-    const noteLines = doc.splitTextToSize(insp.generalNotes, CW-8);
-    const noteH = noteLines.length*4.5 + 8;
-    doc.rect(ML, y, CW, noteH, 'F');
-    setFont('bold',7,C.muted);
-    doc.text('GENERAL NOTES', ML+4, y+5);
     setFont('normal',8,C.charcoal);
-    doc.text(noteLines, ML+4, y+10);
+    const noteLines = doc.splitTextToSize(insp.generalNotes, CW-8);
+    // Note height: label row (~6mm) + line count * 3.8 + bottom pad
+    const noteH = 6 + noteLines.length*3.8 + 4;
+    checkNewPage(noteH + 4);
+    doc.setFillColor(...C.mutedBg);
+    doc.rect(ML, y, CW, noteH, 'F');
+    doc.setFillColor(...C.accent);
+    doc.rect(ML, y, 2.5, noteH, 'F');
+    setFont('bold',7,C.muted);
+    doc.text('GENERAL NOTES', ML+5, y+5);
+    setFont('normal',8,C.charcoal);
+    doc.text(noteLines, ML+5, y+10, {lineHeightFactor:1.2});
     y += noteH + 4;
   }
 
@@ -5741,8 +5777,13 @@ function generatePDF(inspsOverride){
     setFont('normal',7,C.muted);
     doc.text(brandName+' — Confidential',ML,footY+1);
     doc.text(`Page ${pageNum}`,PW-MR,footY+1,{align:'right'});
+    // Centre: report ref if present, otherwise brand contact — matches the
+    // single-form PDF footer style for visual consistency between generators.
     if(reportRef){
       doc.text(reportRef,PW/2,footY+1,{align:'center'});
+    } else {
+      const contact = [brandWebsite,brandPhone,brandEmail].filter(Boolean).join(' · ');
+      if(contact) doc.text(contact, PW/2, footY+1, {align:'center'});
     }
   };
 
@@ -5988,15 +6029,19 @@ function generatePDF(inspsOverride){
     unsatisfactory:{bg:C.dangerBg,brd:C.dangerBrd,txt:C.danger,label:'✗  UNSATISFACTORY — IMMEDIATE ACTION REQUIRED'},
   };
   const sc=statusColors[complianceStatus]||statusColors.satisfactory;
-  doc.setFillColor(...sc.bg);
-  doc.rect(ML,y,CW,14,'F');
-  doc.setDrawColor(...sc.brd);
-  doc.rect(ML,y,CW,14);
-  doc.setDrawColor(...sc.txt);
-  doc.rect(ML,y,4,14,'F');
+  // Pre-wrap so the banner auto-grows if the label is long.
   setFont('bold',9,sc.txt);
-  doc.text(sc.label,ML+8,y+8.5);
-  y+=20;
+  const labelLines = doc.splitTextToSize(sc.label, CW-12);
+  const bannerH = Math.max(14, labelLines.length*4.6 + 8);
+  doc.setFillColor(...sc.bg);
+  doc.rect(ML,y,CW,bannerH,'F');
+  doc.setDrawColor(...sc.brd);
+  doc.rect(ML,y,CW,bannerH);
+  doc.setFillColor(...sc.txt);
+  doc.rect(ML,y,4,bannerH,'F');
+  setFont('bold',9,sc.txt);
+  doc.text(labelLines, ML+8, y + (bannerH/2) - ((labelLines.length-1)*2.3) - 0.5, {lineHeightFactor:1.2});
+  y += bannerH + 6;
 
   // Summary stats on cover
   checkNewPage(30);
@@ -6087,17 +6132,21 @@ function generatePDF(inspsOverride){
       const metaText = insp.title
         ? `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}  ·  ${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`
         : `${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`;
-      // Available width inside the header box (minus left bar & padding).
-      const metaWidth   = CW - 12;
-      // Pre-set the font so splitTextToSize measures correctly.
-      setFont('normal',7,C.muted);
-      const metaLines   = doc.splitTextToSize(metaText, metaWidth);
-      // Header box height grows with the wrapped meta line count.
-      const headerH = insp.title
-        ? 7 + metaLines.length*3.6 + 2   // title row + meta lines + bottom pad
-        : 7 + Math.max(0,(metaLines.length-1))*3.6 + 3;
+      const metaWidth = CW - 12;
 
-      checkNewPage(headerH + 20);
+      // Pre-wrap title AND meta lines so the header box grows for both.
+      setFont('bold',9,C.primary);
+      const titleLines = insp.title ? doc.splitTextToSize(insp.title, metaWidth) : [];
+      setFont('normal',7,C.muted);
+      const metaLines  = doc.splitTextToSize(metaText, metaWidth);
+
+      const titleH = titleLines.length * 4.6;
+      const metaH  = metaLines.length * 3.6;
+      const headerH = insp.title
+        ? (titleH + metaH + 4)
+        : (4 + metaH + 3);
+
+      checkNewPage(headerH + 24);
 
       // Inspection header — brand primary background matching section headings
       doc.setFillColor(...C.mutedBg);
@@ -6109,11 +6158,9 @@ function generatePDF(inspsOverride){
 
       if(insp.title){
         setFont('bold',9,C.primary);
-        // Wrap the title too, in case it's long
-        const titleLines = doc.splitTextToSize(insp.title, CW-12);
-        doc.text(titleLines[0]||'', ML+6, y+5);
+        doc.text(titleLines, ML+6, y+5, {lineHeightFactor:1.2});
         setFont('normal',7,C.muted);
-        doc.text(metaLines, ML+6, y+10, {lineHeightFactor:1.25});
+        doc.text(metaLines, ML+6, y + 5 + titleH + 1, {lineHeightFactor:1.25});
       } else {
         setFont('bold',9,C.primary);
         const inspTitle=`${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`;
@@ -6139,26 +6186,38 @@ function generatePDF(inspsOverride){
           doc.setDrawColor(...C.border);
           doc.line(ML, y+1.5, ML+CW, y+1.5);
           y+=5;
+          // Pixel layout for the field rows: label column on the left,
+          // value column on the right. The label MUST wrap (some labels
+          // are full sentences with "3.0.0.0 — Please explain ...") and
+          // the value must wrap too. Row height = max of both columns.
+          const labelColW = 58;
+          const valueColW = CW - labelColW - 8;
           visible.forEach(f => {
             const v = data[f.id];
             const blank = v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
             let valueStr = '';
             if(blank) valueStr = '— not answered —';
             else if(f.type === 'select') valueStr = ((f.options||[]).find(o=>o.value===v)?.label) || String(v);
-            else if(f.type === 'checkbox') valueStr = v ? '✓ Yes' : 'No';
+            else if(f.type === 'checkbox') valueStr = v ? 'Yes' : 'No';
             else if(f.type === 'date') valueStr = fmtDate(v);
             else if(f.type === 'datetime') { try { valueStr = new Date(v).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); } catch(e){ valueStr = String(v); } }
             else if(f.type === 'signature') valueStr = '(signed)';
             else if(f.type === 'photo') { const arr = Array.isArray(v)?v:[v]; valueStr = `(${arr.length} photo${arr.length!==1?'s':''} attached)`; }
             else valueStr = String(v);
-            checkNewPage(8);
+
+            // Pre-wrap both columns so the row height covers whichever is taller
             setFont('bold',7,C.muted);
-            const labelLines = doc.splitTextToSize(f.label||f.id, 60);
-            doc.text(labelLines[0]||'', ML+4, y);
+            const labelLines = doc.splitTextToSize(f.label||f.id, labelColW-4);
             setFont('normal',8,C.charcoal);
-            const valueLines = doc.splitTextToSize(valueStr, CW-70);
-            doc.text(valueLines, ML+66, y);
-            y += Math.max(5, valueLines.length*4.5);
+            const valueLines = doc.splitTextToSize(valueStr, valueColW);
+            const rowH = Math.max(labelLines.length*3.5, valueLines.length*4.2) + 2;
+            checkNewPage(rowH + 2);
+
+            setFont('bold',7,C.muted);
+            doc.text(labelLines, ML+4, y, {lineHeightFactor:1.15});
+            setFont('normal',8,C.charcoal);
+            doc.text(valueLines, ML+4+labelColW, y, {lineHeightFactor:1.2});
+            y += rowH;
           });
           y+=2;
         });
@@ -6479,11 +6538,16 @@ function generatePDF(inspsOverride){
     openActs.forEach((a,idx)=>{
       const isOverdue=a.dueDate&&new Date(a.dueDate)<today;
       const rowBg=isOverdue?C.dangerBg:idx%2===0?C.white:C.mutedBg;
-      checkNewPage(rowH+2);
 
-      // Measure row height based on text wrap
-      const issueLines=doc.splitTextToSize(a.issue,cols[0].w-4);
-      const rh=Math.max(rowH,issueLines.length*4+4);
+      // Pre-wrap every text column so the row height covers the tallest one.
+      setFont(isOverdue?'bold':'normal',8,C.primary);
+      const issueLines    = doc.splitTextToSize(a.issue||'—',         cols[0].w-4);
+      setFont('normal',7,C.muted);
+      const sectionLines  = doc.splitTextToSize(a.sectionName||'—',   cols[1].w-3);
+      const assigneeLines = doc.splitTextToSize(a.assignedTo||'—',    cols[2].w-3);
+      const maxLines = Math.max(issueLines.length, sectionLines.length, assigneeLines.length);
+      const rh = Math.max(rowH, maxLines*3.8 + 4);
+      checkNewPage(rh + 2);
 
       doc.setFillColor(...rowBg);
       doc.rect(ML,y,CW,rh,'F');
@@ -6492,14 +6556,14 @@ function generatePDF(inspsOverride){
 
       cx=ML+2;
       setFont(isOverdue?'bold':'normal',8,C.primary);
-      doc.text(issueLines,cx,y+5);
+      doc.text(issueLines, cx, y+5, {lineHeightFactor:1.2});
       cx+=cols[0].w;
 
       setFont('normal',7,C.muted);
-      doc.text(doc.splitTextToSize(a.sectionName,cols[1].w-3)[0],cx,y+5);
+      doc.text(sectionLines, cx, y+5, {lineHeightFactor:1.2});
       cx+=cols[1].w;
 
-      doc.text(doc.splitTextToSize(a.assignedTo||'—',cols[2].w-3)[0],cx,y+5);
+      doc.text(assigneeLines, cx, y+5, {lineHeightFactor:1.2});
       cx+=cols[2].w;
 
       setFont(isOverdue?'bold':'normal',7,isOverdue?C.danger:C.primary);
@@ -6585,20 +6649,28 @@ function generatePDF(inspsOverride){
       });
     }
 
-    // Sign-off
+    // Sign-off — auditor name + date with safe wrapping
     if(audit.sig||audit.sigDate){
-      checkNewPage(20);
+      checkNewPage(24);
       y+=4;
       doc.setDrawColor(...C.border);
       doc.line(ML,y,ML+CW,y); y+=6;
       setFont('bold',7,C.muted);
       doc.text('AUDITOR SIGN-OFF',ML,y); y+=5;
+      // Auditor name on the left clipped to half-width so it doesn't crash
+      // into the right-aligned date.
       setFont('normal',9,C.primary);
-      doc.text(`${audit.sig||'—'}`,ML,y);
-      doc.text(`Date: ${audit.sigDate?fmtDate(audit.sigDate):'—'}`,ML+CW,y,{align:'right'});
+      const dateStr = `Date: ${audit.sigDate?fmtDate(audit.sigDate):'—'}`;
+      const dateW = doc.getTextWidth(dateStr) + 6;
+      const nameMaxW = CW - dateW - 4;
+      const nameLines = doc.splitTextToSize(String(audit.sig||'—'), nameMaxW);
+      doc.text(nameLines[0]||'—', ML, y);
+      doc.text(dateStr, ML+CW, y, {align:'right'});
       y+=4;
       doc.setDrawColor(...C.primary);
-      doc.line(ML,y,ML+80,y);
+      // Signature line — width adapts to the column (max 80mm)
+      const sigLineW = Math.min(80, nameMaxW);
+      doc.line(ML,y,ML+sigLineW,y);
       setFont('normal',7,C.muted);
       doc.text('Signature',ML,y+4);
     }
