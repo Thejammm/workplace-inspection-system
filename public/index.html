@@ -4647,49 +4647,140 @@ function renderAdminUsers(users, tenants){
     </table>`;
 }
 
-// ── Add Tenant modal ──
+// ── Add Client modal ──
+// One-shot onboarding: creates the company (tenant) AND a login (user)
+// in a single submission so the consultant doesn't have to do two steps.
+// Any extra users can still be added later via the "+ Add User" button.
 function openAddTenantModal(){
-  openModal('Add Client (Tenant)',
-    `<div style="display:flex;flex-direction:column;gap:12px;">
-       <div class="field-group">
-         <label class="field-label">Client business name</label>
-         <input type="text" id="mTenantName" placeholder="e.g. Easy Travel Leeds" autofocus>
+  openModal('Add Client + Login',
+    `<div style="display:flex;flex-direction:column;gap:14px;">
+
+       <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">
+         Creates the client company AND the first user login in one go.
+         You'll get the credentials on the next screen — copy them, then
+         email them to your client.
        </div>
-       <div class="field-group">
-         <label class="field-label">Tenant ID (optional — auto-generated from name)</label>
-         <input type="text" id="mTenantId" placeholder="e.g. easy-travel-leeds" pattern="[a-z0-9-]+">
-         <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Lowercase letters, numbers, dashes only. Cannot be changed later.</div>
+
+       <div style="border-top:1px solid var(--border);padding-top:10px;">
+         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px;">1. The Client (Tenant)</div>
+         <div class="field-group" style="margin-bottom:10px;">
+           <label class="field-label">Client business name</label>
+           <input type="text" id="mTenantName" placeholder="e.g. Easy Travel Leeds" autocomplete="off" autofocus>
+         </div>
+         <div class="field-group">
+           <label class="field-label">Tenant ID (optional — auto-generated from name)</label>
+           <input type="text" id="mTenantId" placeholder="e.g. easy-travel-leeds" pattern="[a-z0-9-]+" autocomplete="off">
+           <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Lowercase letters, numbers, dashes only. Cannot be changed later.</div>
+         </div>
        </div>
-       <div style="padding:10px 12px;background:var(--accent-light);border:1px solid var(--accent);border-radius:7px;font-size:12px;color:var(--accent-dark);">
-         💡 After creating the tenant, add a user account with their manager's email so they can log in.
+
+       <div style="border-top:1px solid var(--border);padding-top:10px;">
+         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px;">2. The Login</div>
+         <div class="field-group" style="margin-bottom:10px;">
+           <label class="field-label">Email <span style="color:var(--danger);">*</span></label>
+           <input type="email" id="mClientEmail" placeholder="liam@egsleeds.com" autocomplete="off">
+         </div>
+         <div class="field-group" style="margin-bottom:10px;">
+           <label class="field-label">Display name</label>
+           <input type="text" id="mClientName" placeholder="e.g. Liam Briggs" autocomplete="off">
+         </div>
+         <div class="field-group">
+           <label class="field-label">Starter password (8+ chars) <span style="color:var(--danger);">*</span></label>
+           <div style="display:flex;gap:6px;">
+             <input type="text" id="mClientPwd" placeholder="ChangeMe2026!" autocomplete="off" style="flex:1;">
+             <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('mClientPwd').value=_generatePassword();">🎲 Generate</button>
+           </div>
+           <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">User can change this after first login. Shown clearly so you can copy it.</div>
+         </div>
        </div>
+
      </div>`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="submitAddTenant()">＋ Create Tenant</button>`
+     <button class="btn btn-primary" onclick="submitAddTenant()">＋ Create Client &amp; Login</button>`
   );
 }
+
 async function submitAddTenant(){
-  const name = document.getElementById('mTenantName')?.value.trim();
-  const id   = document.getElementById('mTenantId')?.value.trim();
-  if(!name){ showToast('Please enter a client name','error'); return; }
+  const name     = document.getElementById('mTenantName')?.value.trim();
+  const idInput  = document.getElementById('mTenantId')?.value.trim();
+  const email    = document.getElementById('mClientEmail')?.value.trim().toLowerCase();
+  const display  = document.getElementById('mClientName')?.value.trim();
+  const password = document.getElementById('mClientPwd')?.value;
+
+  if(!name)  { showToast('Please enter a client business name','error'); return; }
+  if(!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){
+    showToast('Please enter a valid email','error'); return;
+  }
+  if(!password || password.length < 8){
+    showToast('Password must be at least 8 characters','error'); return;
+  }
+
+  // 1. Create the tenant
+  let tenantId;
   try {
-    const res = await fetch('/api/admin/tenants', {
+    const tRes = await fetch('/api/admin/tenants', {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, id })
+      body: JSON.stringify({ name, id: idInput })
     });
-    const body = await res.json();
-    if(!res.ok){
-      showToast(body.error === 'tenant_id_exists' ? 'A tenant with that ID already exists' : `Failed: ${body.error||res.status}`, 'error');
+    const tBody = await tRes.json();
+    if(!tRes.ok){
+      showToast(tBody.error === 'tenant_id_exists' ? 'A tenant with that ID already exists' : `Failed to create tenant: ${tBody.error||tRes.status}`, 'error');
       return;
     }
-    closeModal();
-    showToast(`✓ Created tenant "${body.tenant.name}"`, 'success');
-    loadAndRenderAdminData();
+    tenantId = tBody.tenant.id;
   } catch(err){
     console.error(err);
     showToast('Network error creating tenant','error');
+    return;
   }
+
+  // 2. Create the login attached to the tenant we just made
+  try {
+    const uRes = await fetch('/api/admin/users', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, role:'client_user', tenantId, displayName: display||null })
+    });
+    const uBody = await uRes.json();
+    if(!uRes.ok){
+      // Roll back the tenant we just created so the consultant can retry cleanly
+      try { await fetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}`, { method:'DELETE', credentials:'include' }); } catch(e){}
+      const msg = uBody.error === 'email_exists' ? `A user with the email ${email} already exists.` : `Failed to create login: ${uBody.error||uRes.status}`;
+      showToast(msg, 'error');
+      return;
+    }
+  } catch(err){
+    console.error(err);
+    showToast('Network error creating login','error');
+    return;
+  }
+
+  // 3. Success — show the credentials in a copy-friendly modal
+  closeModal();
+  const escName  = String(name).replace(/</g,'&lt;');
+  const escEmail = String(email).replace(/</g,'&lt;');
+  const escPwd   = String(password).replace(/</g,'&lt;');
+  openModal('✓ Client created — credentials',
+    `<div style="display:flex;flex-direction:column;gap:14px;">
+       <div style="padding:12px 14px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:8px;">
+         <div style="font-size:13px;color:var(--success);margin-bottom:8px;">
+           <strong>${escName}</strong> is set up. Send these to your client.
+         </div>
+         <div style="font-family:'DM Mono',monospace;font-size:13px;background:#fff;padding:12px 14px;border-radius:6px;border:1px solid var(--success-brd);line-height:1.7;">
+           <div><strong>URL:</strong> https://inspections.archerhs.co.uk</div>
+           <div><strong>Email:</strong> ${escEmail}</div>
+           <div><strong>Password:</strong> ${escPwd}</div>
+         </div>
+       </div>
+       <button class="btn btn-outline btn-sm" onclick="(async()=>{try{await navigator.clipboard.writeText('URL: https://inspections.archerhs.co.uk\\nEmail: ${escEmail}\\nPassword: ${escPwd}');showToast('Login details copied','success');}catch(e){showToast('Clipboard copy failed','error');}})()">📋 Copy login details</button>
+       <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">
+         The password is shown here only once — make sure to copy it before you close this. The client should change their password on first sign-in (click their email in the top-right corner once signed in).
+       </div>
+     </div>`,
+    `<button class="btn btn-primary" onclick="closeModal()">Done</button>`
+  );
+  loadAndRenderAdminData();
 }
 
 // ── Add User modal ──
