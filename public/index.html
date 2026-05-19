@@ -1772,6 +1772,9 @@ let _activeScenario = null;
 document.addEventListener('DOMContentLoaded', async () => {
   // Local boot: always load from localStorage first so the UI renders fast
   loadData();
+  // Push brand colours into CSS variables BEFORE the first render so cards,
+  // buttons, badges and tabs start out in the user's brand.
+  applyBrandingToCSS();
   setDefaultDates();
   populateInspectionForm();
   updateHeaderTitle();
@@ -4075,20 +4078,88 @@ function syncSwatchBgs(){
 
 function flushBranding(){
   if(!S.branding) S.branding={};
-  S.branding.name      = document.getElementById('brandName')?.value.trim()||S.branding.name||'';
-  S.branding.tagline   = document.getElementById('brandTagline')?.value.trim()||S.branding.tagline||'';
-  S.branding.website   = document.getElementById('brandWebsite')?.value.trim()||'';
-  S.branding.phone     = document.getElementById('brandPhone')?.value.trim()||'';
-  S.branding.email     = document.getElementById('brandEmail')?.value.trim()||'';
-  S.branding.primary   = document.getElementById('brandPrimary')?.value||S.branding.primary||'#757575';
-  S.branding.accent    = document.getElementById('brandAccent')?.value||S.branding.accent||'#4BBFD6';
-  S.branding.textColor = document.getElementById('brandTextColor')?.value||S.branding.textColor||'#3a3a3a';
+  // Only overwrite a stored branding value if the DOM input actually exists
+  // (i.e. the Branding tab has been rendered at least once). Otherwise keep
+  // whatever was loaded from server/local. This stops branding being silently
+  // reset to defaults when the user generates a PDF from any other tab.
+  const readText = (id) => {
+    const el = document.getElementById(id);
+    if(!el) return undefined;            // input not present — don't touch state
+    return (el.value || '').trim();      // present — use what's typed (may be '')
+  };
+  const readColor = (id) => {
+    const el = document.getElementById(id);
+    if(!el) return undefined;
+    return el.value || '';
+  };
+
+  const name      = readText('brandName');
+  const tagline   = readText('brandTagline');
+  const website   = readText('brandWebsite');
+  const phone     = readText('brandPhone');
+  const email     = readText('brandEmail');
+  const primary   = readColor('brandPrimary');
+  const accent    = readColor('brandAccent');
+  const textColor = readColor('brandTextColor');
+
+  if(name      !== undefined) S.branding.name      = name      || S.branding.name      || '';
+  if(tagline   !== undefined) S.branding.tagline   = tagline   || S.branding.tagline   || '';
+  if(website   !== undefined) S.branding.website   = website;     // typed-empty is valid
+  if(phone     !== undefined) S.branding.phone     = phone;
+  if(email     !== undefined) S.branding.email     = email;
+  if(primary   !== undefined) S.branding.primary   = primary   || S.branding.primary   || '#757575';
+  if(accent    !== undefined) S.branding.accent    = accent    || S.branding.accent    || '#4BBFD6';
+  if(textColor !== undefined) S.branding.textColor = textColor || S.branding.textColor || '#3a3a3a';
+}
+
+// Push the user's chosen brand colours into the live CSS custom properties
+// so every part of the on-screen UI styled with var(--primary) / var(--accent)
+// / var(--accent-light) / var(--accent-dark) actually reflects their brand —
+// not the bootstrap cyan/grey defaults.
+//
+// Called on app start (after loadData), after loadFromServerAndRender, after
+// the user changes a colour or applies a preset.
+function applyBrandingToCSS(){
+  if(!S.branding) return;
+  const primary = S.branding.primary || '#757575';
+  const accent  = S.branding.accent  || '#4BBFD6';
+  const text    = S.branding.textColor || '#3a3a3a';
+
+  // Derived shades — light tint for chip/badge backgrounds, dark shade for hover
+  const toRgbStr = hex => {
+    const r=parseInt(hex.slice(1,3),16);
+    const g=parseInt(hex.slice(3,5),16);
+    const b=parseInt(hex.slice(5,7),16);
+    return `${r}, ${g}, ${b}`;
+  };
+  const mix = (hex, white, amount) => {
+    const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+    if(white){
+      return `rgb(${Math.round(r+(255-r)*amount)},${Math.round(g+(255-g)*amount)},${Math.round(b+(255-b)*amount)})`;
+    } else {
+      return `rgb(${Math.round(r*(1-amount))},${Math.round(g*(1-amount))},${Math.round(b*(1-amount))})`;
+    }
+  };
+  const accentLight = mix(accent, true, 0.85);   // very light tint for backgrounds
+  const accentDark  = mix(accent, false, 0.18);  // slightly darker for hover
+
+  const root = document.documentElement.style;
+  root.setProperty('--primary', primary);
+  root.setProperty('--accent', accent);
+  root.setProperty('--accent-light', accentLight);
+  root.setProperty('--accent-dark', accentDark);
+  root.setProperty('--accent-rgb', toRgbStr(accent));
 }
 
 function updateBrandPreview(){
   // Always flush to state first — no manual save step needed
   flushBranding();
   scheduleAutoSave();
+
+  // Push the picked brand colours into the live CSS variables so the
+  // on-screen UI (cards, badges, buttons, tabs, stat cards) actually
+  // reflects them.
+  applyBrandingToCSS();
 
   syncSwatchBgs();
   const primary = S.branding.primary||'#757575';
@@ -4321,6 +4392,9 @@ async function loadFromServerAndRender(){
 }
 
 function _rerenderEverything(){
+  // After (re)loading state from server, re-apply brand colours to the live
+  // CSS variables so the UI reflects whatever branding the tenant has saved.
+  applyBrandingToCSS();
   setDefaultDates();
   populateInspectionForm();
   renderInspectionTypeGrid();
@@ -5012,13 +5086,19 @@ function generateSingleFormPDF(insp){
     primary:  hexToRgb(brandPrimary),
     charcoal: hexToRgb(brandTextCol),
     accent:   hexToRgb(brandAccent),
+    accentDark:  hexToRgbDark(brandAccent, 0.20),
     accentLight: hexToRgbLight(brandAccent, 0.88),
     white:    [255,255,255],
     border:   hexToRgbLight(brandPrimary, 0.82),
     muted:    hexToRgbLight(brandPrimary, 0.30),
     mutedBg:  hexToRgbLight(brandPrimary, 0.92),
+    // Status colours kept true for safety meaning
     success:  [26,122,74],
-    successBg:[232,247,239]
+    successBg:[232,247,239],
+    // Brand-derived info palette (was hardcoded greys before)
+    info:     hexToRgbDark(brandAccent, 0.10),
+    infoBg:   hexToRgbLight(brandAccent, 0.90),
+    infoBrd:  hexToRgbLight(brandAccent, 0.65),
   };
 
   const {jsPDF} = window.jspdf;
@@ -5374,6 +5454,12 @@ function generatePDF(inspsOverride){
     info:      hexToRgbDark(brandAccent, 0.10),     // info uses a dark shade of accent
     infoBg:    hexToRgbLight(brandAccent, 0.90),    // info bg is very light accent tint
     infoBrd:   hexToRgbLight(brandAccent, 0.65),    // info border is mid accent tint
+    // Rectified-on-site — derived from brand accent (was a hardcoded teal-green
+    // that ignored brand settings entirely). Now reads as brand-positive.
+    rectified:    hexToRgbDark(brandAccent, 0.35),
+    rectifiedBg:  hexToRgbLight(brandAccent, 0.85),
+    rectifiedBrd: hexToRgbLight(brandAccent, 0.55),
+    rectifiedBar: hexToRgbDark(brandAccent, 0.15),
   };
 
   // ── PDF logo helper ─────────────────────────────────────────
@@ -5734,7 +5820,7 @@ function generatePDF(inspsOverride){
   statBoxes([
     {label:'Inspections',        value:insps.length,  color:C.charcoal},
     {label:'Items Passed',       value:nPass,         color:C.success,  bgColor:C.successBg},
-    {label:'Rectified On Site',  value:nRect,         color:[6,95,70],  bgColor:[209,250,229]},
+    {label:'Rectified On Site',  value:nRect,         color:C.rectified, bgColor:C.rectifiedBg},
     {label:'Issues Raised',      value:nAct,          color:C.warning,  bgColor:C.warningBg},
     {label:'Resolved',           value:nRes,          color:C.success,  bgColor:C.successBg},
     {label:'Open Actions',       value:nOpen,         color:nOpen>0?C.danger:C.muted, bgColor:nOpen>0?C.dangerBg:C.mutedBg},
@@ -5946,7 +6032,7 @@ function generatePDF(inspsOverride){
           let icon, iconColor, statusLabel;
           switch(status){
             case 'pass':      icon='✓'; iconColor=C.success;   statusLabel='Pass';      break;
-            case 'rectified': icon='✔'; iconColor=[6,95,70];   statusLabel='Rectified'; break;
+            case 'rectified': icon='✔'; iconColor=C.rectified; statusLabel='Rectified'; break;
             case 'action':    icon='⚠'; iconColor=C.warning;   statusLabel='Action';    break;
             case 'na':        icon='—'; iconColor=C.muted;     statusLabel='N/A';       break;
             default:          icon='○'; iconColor=C.danger;    statusLabel='Not done';  break;
@@ -5997,7 +6083,7 @@ function generatePDF(inspsOverride){
       if(rectItems.length){
         y+=2;
         checkNewPage(12);
-        setFont('bold',7,[6,95,70]);
+        setFont('bold',7,C.rectified);
         doc.text('RECTIFIED ON SITE:',ML+2,y);
         y+=4;
         rectItems.forEach(ri=>{
@@ -6008,13 +6094,13 @@ function generatePDF(inspsOverride){
           const byW = byStr ? Math.min(doc.getTextWidth(byStr)+2, CW*0.35) : 0;
 
           // Wrap item name in the remaining width on the left.
-          setFont('bold',8,[6,95,70]);
+          setFont('bold',8,C.rectified);
           const nameLines = doc.splitTextToSize(`✔ ${ri.name}`, CW - 10 - byW);
 
           // Wrap the rectification note across the full width.
           let noteLines = [];
           if(ri.rd.note){
-            setFont('normal',7,[6,95,70]);
+            setFont('normal',7,C.rectified);
             noteLines = doc.splitTextToSize(ri.rd.note, CW-10);
           }
 
@@ -6022,18 +6108,18 @@ function generatePDF(inspsOverride){
           const boxH = 4 + nameLines.length*3.6 + (noteLines.length ? noteLines.length*3.4 + 2 : 0) + 2;
 
           checkNewPage(boxH + 4);
-          doc.setFillColor(209,250,229);
+          doc.setFillColor(...C.rectifiedBg);
           doc.rect(ML,y,CW,boxH,'F');
-          doc.setFillColor(5,150,105);
+          doc.setFillColor(...C.rectifiedBar);
           doc.rect(ML,y,2.5,boxH,'F');
 
           // Item name (wrapped)
-          setFont('bold',8,[6,95,70]);
+          setFont('bold',8,C.rectified);
           doc.text(nameLines, ML+5, y+4, {lineHeightFactor:1.2});
 
           // Rectification note (wrapped)
           if(noteLines.length){
-            setFont('normal',7,[6,95,70]);
+            setFont('normal',7,C.rectified);
             doc.text(noteLines, ML+5, y + 4 + nameLines.length*3.6 + 2, {lineHeightFactor:1.25});
           }
 
