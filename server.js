@@ -48,13 +48,23 @@ app.use('/api', (_req, res) => {
 });
 
 // ── Static front-end ──────────────────────────────────────────
+// HTML is always revalidated so deploys are picked up immediately by the
+// browser. Static assets (none yet, but future JS/CSS/images) still get
+// short-cached so the page is fast.
 app.use(express.static(path.join(__dirname, 'public'), {
-  maxAge: '1h',
-  extensions: ['html']
+  extensions: ['html'],
+  setHeaders: (res, filePath) => {
+    if(/\.html$/i.test(filePath)){
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=300');
+    }
+  }
 }));
 
-// SPA fallback — any other route serves index.html
+// SPA fallback — any other route serves index.html (also no-cache)
 app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
