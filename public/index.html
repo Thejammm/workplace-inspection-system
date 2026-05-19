@@ -5599,7 +5599,9 @@ function generatePDF(inspsOverride){
   // Report title (from first inspection title or generic)
   const reportTitleOverride = insps.length===1&&insps[0].title ? insps[0].title : '';
 
-  const allRes=insps.flatMap(i=>Object.values(i.results));
+  // Form-style submissions don't have `results` — guard with || {} so the
+  // bulk report can mix checklist + form-style inspections without crashing.
+  const allRes=insps.flatMap(i=>Object.values(i.results||{}));
   const nPass=allRes.filter(r=>r==='pass').length;
   const nAct=allRes.filter(r=>r==='action').length;
   const nNA=allRes.filter(r=>r==='na').length;
