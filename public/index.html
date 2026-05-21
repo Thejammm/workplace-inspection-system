@@ -2284,12 +2284,16 @@ function renderActiveInspectionBody(){
   if(detailsCard) detailsCard.style.display = isForm ? 'none' : '';
   if(notesCard)   notesCard.style.display   = isForm ? 'none' : '';
 
-  // Show the "Submit & Save PDF" button only for form-style types.
-  // Hide the "New Period" button for form-style (irrelevant — forms aren't periodic).
+  // "📄 Submit & Save PDF" is now available for BOTH form-style AND
+  // checklist-style inspections — every submission can be auto-filed.
+  // "💾 Save & Notify Manager" is also available for both — use it to submit
+  // without an immediate PDF (e.g. mid-batch, or the consultant wants to
+  // wait until actions are closed before producing the final record).
   const pdfBtn = document.getElementById('submitAndPdfBtn');
-  if(pdfBtn) pdfBtn.style.display = isForm ? 'inline-flex' : 'none';
+  if(pdfBtn) pdfBtn.style.display = 'inline-flex';
   const submitBtn = document.querySelector('.action-bar .btn-primary[onclick="submitInspection()"]');
-  if(submitBtn) submitBtn.style.display = isForm ? 'none' : 'inline-flex';
+  if(submitBtn) submitBtn.style.display = 'inline-flex';
+  // "New Period" only makes sense for periodic (checklist) types.
   const newPeriodBtn = document.querySelector('.action-bar .btn-outline[onclick="startNewDraft()"]');
   if(newPeriodBtn) newPeriodBtn.style.display = isForm ? 'none' : 'inline-flex';
 }
@@ -2864,29 +2868,37 @@ function submitInspection() {
 
 // Submit current draft and immediately generate a single-form PDF for filing.
 // Only intended for form-style inspections.
+// Submit the current draft AND immediately generate a PDF for filing.
+// Works for BOTH inspection kinds — routes to the right generator:
+//   • form-style    → generateSingleFormPDF(insp)
+//   • checklist-style → generatePDF([insp])
+// If the type has a notify-email hook (e.g. Near Miss → liam@egsleeds.com)
+// the user's mail client is opened pre-addressed AFTER the PDF download.
 function submitFormAndPDF(){
-  const activeType = S.inspectionTypes?.[S.draft?.typeId];
-  if(activeType?.kind !== 'form'){
-    showToast('PDF export is per-form only. Use the Monthly Report for checklist PDFs.','error');
-    return;
-  }
   const insp = submitInspection();
   if(!insp) return; // validation failed; user already informed
 
-  // 1) Generate the PDF (this triggers the browser download)
-  setTimeout(()=>{
+  setTimeout(() => {
     try {
-      generateSingleFormPDF(insp);
+      if(insp.kind === 'form'){
+        generateSingleFormPDF(insp);
+      } else {
+        // Checklist-style: scope the bulk PDF generator to just this one
+        // inspection so the user gets the same per-card output they'd get
+        // from the Monthly Report tab.
+        generatePDF([insp]);
+      }
     } catch(err){
-      console.error('Single-form PDF generation failed:', err);
+      console.error('Submit-and-PDF generation failed:', err);
       showToast('PDF generation failed — check console for details. Submission was saved.','error');
       return;
     }
-    // 2) If the form has a 'notify' hook, open the user's email client
-    //    pre-addressed with subject + body. They attach the PDF manually.
-    const form = FORMS[insp.typeId];
-    if(form?.notify?.email){
-      setTimeout(() => _openNotifyEmail(insp, form.notify), 600);
+    // Notify-email hook (form-style only — checklist types don't have one)
+    if(insp.kind === 'form'){
+      const form = FORMS[insp.typeId];
+      if(form?.notify?.email){
+        setTimeout(() => _openNotifyEmail(insp, form.notify), 600);
+      }
     }
   }, 200);
 }
@@ -3155,6 +3167,35 @@ function resolveAction(id){
   saveData(); updateBadge(); showToast('✓ Action resolved');
   renderActions(); renderActionStats();
   renderMonthlyReport(); // refresh the report so sign-off panel updates
+
+  // ── Closeout PDF ────────────────────────────────────────────────
+  // If THIS was the last open action on its parent inspection, auto-
+  // generate the final closeout PDF. The user gets a single download
+  // marking the inspection as fully resolved — no manual button-hunting.
+  if(a.inspId){
+    const siblings = S.actions.filter(x => x.inspId === a.inspId);
+    const stillOpen = siblings.filter(x => !x.resolved);
+    if(stillOpen.length === 0){
+      const insp = S.inspections.find(i => i.id === a.inspId);
+      if(insp){
+        showToast('🏁 All actions closed — generating closeout PDF…', 'success');
+        setTimeout(() => {
+          try {
+            if(typeof generateSingleInspectionPDF === 'function'){
+              generateSingleInspectionPDF(insp.id);
+            } else if(insp.kind === 'form'){
+              generateSingleFormPDF(insp);
+            } else {
+              generatePDF([insp]);
+            }
+          } catch(err){
+            console.error('Closeout PDF failed:', err);
+            showToast('Closeout PDF failed — generate manually from Monthly Report', 'error');
+          }
+        }, 400);
+      }
+    }
+  }
 }
 
 // ── Inspection-level sign-off ─────────────────────────────────
