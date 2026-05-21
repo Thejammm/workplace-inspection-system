@@ -1423,8 +1423,8 @@ const LIBRARY = [
     color:'#e3f2fd',
     sections:[
       { id:'mqc_setup', name:'Test Setup', icon:'⚙️', items:[
-        { id:'mqc_s1', name:'Quality check type (Closely observe / Full re-inspection)' },
-        { id:'mqc_s2', name:'Test class (1 / 2 / 4 / 5 / 7)' },
+        { id:'mqc_s1', name:'Quality check type', input:'select', options:['Closely observe','Full re-inspection'] },
+        { id:'mqc_s2', name:'Test class',         input:'select', options:['1','2','4','5','7'] },
       ]},
       { id:'mqc_inspection', name:'Vehicle Inspection Items', icon:'🔧', items:[
         { id:'mqc_i1', name:'Have pre-checks of the vehicle been carried out correctly?' },
@@ -1440,8 +1440,8 @@ const LIBRARY = [
         { id:'mqc_p1', name:'Have tools and equipment been used correctly?' },
         { id:'mqc_p2', name:'Has health and safety been adhered to during the test routine, including use of PPE?' },
         { id:'mqc_p3', name:'Has the MOT testing service been used correctly, including test class, details and results?' },
-        { id:'mqc_p4', name:"Photo of tester's MOT inspection sheet attached" },
-        { id:'mqc_p5', name:'Any additional comments?' },
+        { id:'mqc_p4', name:"Photo of tester's MOT inspection sheet", input:'photo' },
+        { id:'mqc_p5', name:'Any additional comments?', input:'textarea' },
       ]},
     ]
   },
@@ -2440,7 +2440,16 @@ function renderChecklist() {
     const nAction = section.items.filter(i=>results[i.id]==='action').length;
     const nNA     = section.items.filter(i=>results[i.id]==='na').length;
     const nRect   = section.items.filter(i=>results[i.id]==='rectified').length;
-    const nDone   = nPass+nAction+nNA+nRect;
+    // Typed-input items (select / textarea / photo) count as done when their
+    // results entry is any truthy value (string with content, or non-empty
+    // array of photo URLs).
+    const nTyped  = section.items.filter(i => {
+      if(!i.input) return false;
+      const v = results[i.id];
+      if(Array.isArray(v)) return v.length > 0;
+      return typeof v === 'string' && v.trim().length > 0;
+    }).length;
+    const nDone   = nPass+nAction+nNA+nRect+nTyped;
     const total   = section.items.length;
     const progressEl = nDone===total && total>0
       ? `<span class="badge badge-success">${nPass}✓${nRect?` · <span style="color:#065f46">${nRect}⬆</span>`:''}${nAction?` · <span style="color:var(--warning)">${nAction}⚠</span>`:''}</span>`
@@ -2460,6 +2469,71 @@ function renderChecklist() {
       const itAd= ad[item.id]||{};
       const itRd= (S.draft.rectifyDetails||{})[item.id]||{};
       const hasNote = nt.trim().length>0;
+
+      // ── INPUT-TYPED items (select / textarea / photo) ──
+      // These replace the pass/fail/action/N/A controls with the right
+      // input for the answer. The answer is still stored in S.draft.results
+      // (so completion counters keep working) — just as a string for
+      // select/textarea, or an array of data URLs for photo.
+      if(item.input === 'select'){
+        const v = String(st || '');
+        const opts = (item.options||[]).map(o => `<option value="${o.replace(/"/g,'&quot;')}"${v===o?' selected':''}>${o}</option>`).join('');
+        html += `
+          <div class="ci-wrap" id="ciw-${item.id}">
+            <div class="ci-row">
+              <div class="ci-main">
+                <div class="ci-name">${item.name}</div>
+                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+              </div>
+              <div class="ci-controls" style="min-width:220px;">
+                <select id="sel-${item.id}" onchange="setStatus('${item.id}', this.value)" style="width:100%;">
+                  <option value="">— Select —</option>
+                  ${opts}
+                </select>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      if(item.input === 'textarea'){
+        const v = String(st || '');
+        html += `
+          <div class="ci-wrap" id="ciw-${item.id}">
+            <div class="ci-row" style="flex-direction:column;align-items:stretch;gap:6px;">
+              <div class="ci-main">
+                <div class="ci-name">${item.name}</div>
+                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+              </div>
+              <textarea id="ta-${item.id}" rows="3" placeholder="${(item.placeholder||'').replace(/"/g,'&quot;')}" oninput="setStatus('${item.id}', this.value)" style="width:100%;">${v.replace(/</g,'&lt;')}</textarea>
+            </div>
+          </div>`;
+        return;
+      }
+
+      if(item.input === 'photo'){
+        // Treat results[id] as an array of data URLs for photo items
+        const photos = Array.isArray(st) ? st : (st ? [st] : []);
+        html += `
+          <div class="ci-wrap" id="ciw-${item.id}">
+            <div class="ci-row" style="flex-direction:column;align-items:stretch;gap:8px;">
+              <div class="ci-main">
+                <div class="ci-name">${item.name}</div>
+                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+              </div>
+              <div class="photo-upload-zone" id="ip-zone-${item.id}">
+                ${renderItemPhotoThumbs(photos, item.id)}
+                <label class="photo-add-btn" title="Add photo">
+                  <input type="file" accept="image/*" capture="environment" onchange="addItemPhoto(event,'${item.id}')">
+                  <span>📷</span><span>${photos.length?'Add another':'Take photo'}</span>
+                </label>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      // ── DEFAULT (pass/fail/action/N/A) ──
       html += `
         <div class="ci-wrap" id="ciw-${item.id}">
           <div class="ci-row">
@@ -2528,15 +2602,71 @@ function setStatus(itemId, status) {
   if(wrap) {
     const btns = wrap.querySelectorAll('.stt-btn');
     btns.forEach(b=>b.classList.remove('stt-pass','stt-rectified','stt-action','stt-na'));
-    if(status==='pass')      btns[0].classList.add('stt-pass');
-    if(status==='rectified') btns[1].classList.add('stt-rectified');
-    if(status==='action')    btns[2].classList.add('stt-action');
-    if(status==='na')        btns[3].classList.add('stt-na');
+    if(status==='pass')      btns[0]?.classList.add('stt-pass');
+    if(status==='rectified') btns[1]?.classList.add('stt-rectified');
+    if(status==='action')    btns[2]?.classList.add('stt-action');
+    if(status==='na')        btns[3]?.classList.add('stt-na');
   }
   const rp = document.getElementById('rp-'+itemId);
   if(rp) rp.classList.toggle('open', status==='rectified');
   const ap = document.getElementById('ap-'+itemId);
   if(ap) ap.classList.toggle('open', status==='action');
+  scheduleAutoSave();
+}
+
+// ── Photo helpers for input:'photo' checklist items ────────────────
+// (separate from addPhoto/removePhoto which manage before/after photos
+// on action items — those are tied to actionDetails, these tie to results
+// so the item is considered "done" once a photo is attached.)
+function renderItemPhotoThumbs(photos, itemId){
+  if(!photos || !photos.length) return '';
+  return photos.map((src, i) => `
+    <div class="photo-thumb-wrap">
+      <img class="photo-thumb" src="${src}" onclick="openLightbox('${src}','Photo')" alt="Photo ${i+1}" title="Click to enlarge">
+      <button class="photo-thumb-del" onclick="removeItemPhoto('${itemId}',${i})" title="Remove">✕</button>
+    </div>`).join('');
+}
+
+function addItemPhoto(event, itemId){
+  const file = event.target?.files?.[0];
+  if(!file) return;
+  // Reuse the existing photo compression pipeline (resize to ~1000px JPEG)
+  compressPhoto(file, dataUrl => {
+    if(!S.draft.results) S.draft.results = {};
+    const cur = S.draft.results[itemId];
+    const photos = Array.isArray(cur) ? cur.slice() : (cur ? [cur] : []);
+    photos.push(dataUrl);
+    S.draft.results[itemId] = photos;
+    const zone = document.getElementById('ip-zone-'+itemId);
+    if(zone){
+      zone.innerHTML = renderItemPhotoThumbs(photos, itemId) +
+        `<label class="photo-add-btn" title="Add photo">
+           <input type="file" accept="image/*" capture="environment" onchange="addItemPhoto(event,'${itemId}')">
+           <span>📷</span><span>Add another</span>
+         </label>`;
+    }
+    scheduleAutoSave();
+  });
+  // Allow re-picking the same file (e.g. retake) by clearing the input
+  event.target.value = '';
+}
+
+function removeItemPhoto(itemId, index){
+  const cur = S.draft.results?.[itemId];
+  if(!Array.isArray(cur)) return;
+  cur.splice(index, 1);
+  if(!cur.length){
+    delete S.draft.results[itemId];   // mark as incomplete again
+  }
+  const zone = document.getElementById('ip-zone-'+itemId);
+  if(zone){
+    const photos = Array.isArray(S.draft.results?.[itemId]) ? S.draft.results[itemId] : [];
+    zone.innerHTML = renderItemPhotoThumbs(photos, itemId) +
+      `<label class="photo-add-btn" title="Add photo">
+         <input type="file" accept="image/*" capture="environment" onchange="addItemPhoto(event,'${itemId}')">
+         <span>📷</span><span>${photos.length?'Add another':'Take photo'}</span>
+       </label>`;
+  }
   scheduleAutoSave();
 }
 
@@ -2672,8 +2802,15 @@ function submitInspection() {
   }
 
   // ── Checklist-style submission (original logic) ──
+  // An item counts as "answered" when results[id] is truthy AND, in the case
+  // of typed inputs (photo array, textarea string), has actual content.
   const missing=[];
-  S.checklist.forEach(s=>s.items.forEach(i=>{ if(!d.results[i.id]) missing.push(i.name); }));
+  S.checklist.forEach(s=>s.items.forEach(i=>{
+    const v = d.results[i.id];
+    if(v === undefined || v === null || v === '') missing.push(i.name);
+    else if(Array.isArray(v) && v.length === 0) missing.push(i.name);
+    else if(typeof v === 'string' && v.trim() === '') missing.push(i.name);
+  }));
   if(missing.length){ showToast(`${missing.length} item${missing.length>1?'s':''} still need a status.`,'error'); return null; }
 
   const insp={
@@ -6600,14 +6737,37 @@ function generatePDF(inspsOverride){
           return;
         }
         sec.items.forEach((item, ii) => {
-          const status = insp.results?.[item.id] || '';
-          let iconColor, statusLabel;
-          switch(status){
-            case 'pass':      iconColor=C.success;   statusLabel='Pass';      break;
-            case 'rectified': iconColor=C.rectified; statusLabel='Rectified'; break;
-            case 'action':    iconColor=C.warning;   statusLabel='Action';    break;
-            case 'na':        iconColor=C.muted;     statusLabel='N/A';       break;
-            default:          iconColor=C.danger;    statusLabel='Not done';  break;
+          const rawStatus = insp.results?.[item.id];
+          // Typed-input items don't have pass/fail status — they have a
+          // captured answer (string or array of photo URLs). Render the
+          // ANSWER as the status label and use the brand accent icon.
+          const isTyped = !!item.input;
+          let iconColor, statusLabel, isPhotoItem = false;
+          if(isTyped){
+            iconColor = C.cyan;
+            if(item.input === 'photo'){
+              isPhotoItem = true;
+              const n = Array.isArray(rawStatus) ? rawStatus.length : (rawStatus ? 1 : 0);
+              statusLabel = n > 0 ? `${n} photo${n>1?'s':''} attached` : 'No photo';
+              if(n === 0) iconColor = C.muted;
+            } else if(item.input === 'textarea'){
+              const s = String(rawStatus || '').trim();
+              statusLabel = s ? (s.length > 40 ? s.slice(0,37)+'…' : s) : '— not answered —';
+              if(!s) iconColor = C.muted;
+            } else {
+              // select (or any future typed input)
+              statusLabel = String(rawStatus || '').trim() || '— not answered —';
+              if(!statusLabel || statusLabel === '— not answered —') iconColor = C.muted;
+            }
+          } else {
+            const status = rawStatus || '';
+            switch(status){
+              case 'pass':      iconColor=C.success;   statusLabel='Pass';      break;
+              case 'rectified': iconColor=C.rectified; statusLabel='Rectified'; break;
+              case 'action':    iconColor=C.warning;   statusLabel='Action';    break;
+              case 'na':        iconColor=C.muted;     statusLabel='N/A';       break;
+              default:          iconColor=C.danger;    statusLabel='Not done';  break;
+            }
           }
           // Indicator suffixes — plain ASCII, since the emoji glyphs aren't
           // in helvetica either.
@@ -6629,16 +6789,31 @@ function generatePDF(inspsOverride){
             doc.rect(ML, y, CW, rowH, 'F');
           }
 
-          // Status icon — drawn, not glyph
-          drawStatusIcon(status, ML+2, y+4);
+          // Status icon — drawn, not glyph. For typed-input items, synthesise
+          // a pass/empty status from whether the user actually answered.
+          let iconStatus;
+          if(isTyped){
+            const answered = Array.isArray(rawStatus) ? rawStatus.length > 0
+              : typeof rawStatus === 'string' ? rawStatus.trim().length > 0
+              : !!rawStatus;
+            iconStatus = answered ? 'pass' : '';
+          } else {
+            iconStatus = rawStatus || '';
+          }
+          drawStatusIcon(iconStatus, ML+2, y+4);
 
           // Item name (wrapped)
           setFont('normal', 8, C.charcoal);
           doc.text(nameLines, ML+10, y+4);
 
           // Status label at right
+          // For typed-input answers we use sentence case (not screaming uppercase
+          // — "Closely observe" reads better than "CLOSELY OBSERVE"). Pass/fail
+          // statuses stay uppercase for visual consistency with the rest of the
+          // report.
           setFont('bold', 7, iconColor);
-          doc.text(statusLabel.toUpperCase(), ML+CW-3, y+4, {align:'right'});
+          const labelToDraw = isTyped ? statusLabel : statusLabel.toUpperCase();
+          doc.text(labelToDraw, ML+CW-3, y+4, {align:'right'});
 
           y += rowH;
         });
