@@ -34,6 +34,12 @@ CREATE INDEX IF NOT EXISTS idx_users_tenant ON users (tenant_id);
 -- databases on deploy; DEFAULT TRUE backfills every existing user as active.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
+-- Plain-text copy of the password, kept so the consultant can read back the
+-- logins they hand to clients. Written whenever a password is set/reset; login
+-- still verifies against password_hash. NULL for users whose password predates
+-- this column (their original password was never stored in readable form).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain TEXT;
+
 -- App state: one row per tenant holding the entire S blob from the frontend.
 -- Stored as JSONB so we can query inside it later if needed.
 CREATE TABLE IF NOT EXISTS app_state (

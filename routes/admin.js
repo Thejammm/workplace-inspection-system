@@ -104,7 +104,7 @@ router.get('/users', async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT u.id, u.email, u.role, u.tenant_id, u.display_name,
-              u.created_at, u.last_login_at, u.is_active,
+              u.created_at, u.last_login_at, u.is_active, u.password_plain,
               t.name AS tenant_name
          FROM users u
          LEFT JOIN tenants t ON t.id = u.tenant_id
@@ -148,9 +148,9 @@ router.post('/users', async (req, res) => {
     const id   = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 10);
     await pool.query(
-      `INSERT INTO users (id, email, password_hash, tenant_id, role, display_name)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [id, email, hash, tenantId, role, displayName]
+      `INSERT INTO users (id, email, password_hash, tenant_id, role, display_name, password_plain)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, email, hash, tenantId, role, displayName, password]
     );
     res.json({ user: { id, email, role, tenantId, displayName } });
   } catch(err){
@@ -172,8 +172,8 @@ router.post('/users/:id/reset-password', async (req, res) => {
   try {
     const hash = await bcrypt.hash(password, 10);
     const r = await pool.query(
-      `UPDATE users SET password_hash = $1 WHERE id = $2`,
-      [hash, id]
+      `UPDATE users SET password_hash = $1, password_plain = $2 WHERE id = $3`,
+      [hash, password, id]
     );
     if(r.rowCount === 0){ return res.status(404).json({ error: 'user_not_found' }); }
     res.json({ ok: true });
@@ -207,6 +207,75 @@ router.patch('/users/:id/active', async (req, res) => {
     res.json({ ok: true, id, is_active: active });
   } catch(err){
     console.error('PATCH /users/:id/active error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// PATCH /api/admin/users/:id — edit a user in full: email, display name,
+// role, tenant, and (optionally) a new password. Any field left out is kept
+// as-is. Login still verifies against password_hash; password_plain is updated
+// alongside so the consultant can read it back.
+router.patch('/users/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    const cur = await pool.query(
+      `SELECT id, email, role, tenant_id, display_name FROM users WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    if(!cur.rows.length){ return res.status(404).json({ error: 'user_not_found' }); }
+    const u = cur.rows[0];
+
+    // Merge incoming values over the current ones (only provided fields change)
+    const email = req.body?.email !== undefined
+      ? String(req.body.email).trim().toLowerCase() : u.email;
+    const displayName = req.body?.displayName !== undefined
+      ? (String(req.body.displayName).trim() || null) : u.display_name;
+    const role = req.body?.role !== undefined ? String(req.body.role).trim() : u.role;
+    let tenantId = req.body?.tenantId !== undefined
+      ? (req.body.tenantId ? String(req.body.tenantId).trim() : null) : u.tenant_id;
+    const password = req.body?.password !== undefined ? String(req.body.password) : null;
+
+    if(!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){
+      return res.status(400).json({ error: 'valid_email_required' });
+    }
+    if(!['consultant','client_user'].includes(role)){
+      return res.status(400).json({ error: 'invalid_role' });
+    }
+    if(role === 'consultant'){ tenantId = null; }
+    if(role === 'client_user' && !tenantId){
+      return res.status(400).json({ error: 'tenant_required_for_client_user' });
+    }
+    // Don't let the signed-in consultant demote themselves out of admin access
+    if(String(req.user.id) === String(id) && role !== 'consultant'){
+      return res.status(400).json({ error: 'cannot_demote_self' });
+    }
+    if(password !== null && password.length < 8){
+      return res.status(400).json({ error: 'password_min_8' });
+    }
+    if(tenantId){
+      const t = await pool.query(`SELECT 1 FROM tenants WHERE id = $1`, [tenantId]);
+      if(!t.rows.length){ return res.status(404).json({ error: 'tenant_not_found' }); }
+    }
+
+    if(password !== null){
+      const hash = await bcrypt.hash(password, 10);
+      await pool.query(
+        `UPDATE users SET email = $1, display_name = $2, role = $3, tenant_id = $4,
+                          password_hash = $5, password_plain = $6
+           WHERE id = $7`,
+        [email, displayName, role, tenantId, hash, password, id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE users SET email = $1, display_name = $2, role = $3, tenant_id = $4
+           WHERE id = $5`,
+        [email, displayName, role, tenantId, id]
+      );
+    }
+    res.json({ ok: true, user: { id, email, role, tenantId, displayName } });
+  } catch(err){
+    if(err.code === '23505'){ return res.status(409).json({ error: 'email_exists' }); }
+    console.error('PATCH /users/:id error:', err);
     res.status(500).json({ error: 'server_error' });
   }
 });

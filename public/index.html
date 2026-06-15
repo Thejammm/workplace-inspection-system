@@ -1086,7 +1086,10 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
         <div class="card">
           <div class="card-band">
             <h3><span class="dot">●</span> Users (Logins)</h3>
-            <button class="btn btn-primary btn-sm no-print" onclick="openAddUserModal()">＋ Add User</button>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-outline btn-sm no-print" id="revealPwdBtn" onclick="togglePasswordReveal()">🔓 Reveal passwords</button>
+              <button class="btn btn-primary btn-sm no-print" onclick="openAddUserModal()">＋ Add User</button>
+            </div>
           </div>
           <div class="card-body">
             <div id="adminUsersList"><em style="color:var(--text-muted);font-size:13px;">Loading…</em></div>
@@ -4845,14 +4848,21 @@ function renderAdminTenants(tenants){
     </table>`;
 }
 
+let _passwordsRevealed = false;
+let _adminUsersCache   = [];
+let _adminTenantsCache = [];
+
 function renderAdminUsers(users, tenants){
   const el = document.getElementById('adminUsersList');
   if(!el) return;
+  _adminUsersCache   = users   || [];
+  _adminTenantsCache = tenants || [];
   if(!users.length){
     el.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px;">No users yet. Click "+ Add User" to create one.</div>`;
     return;
   }
   const tenantById = Object.fromEntries((tenants||[]).map(t => [t.id, t]));
+  const reveal = _passwordsRevealed;
   el.innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
       <thead><tr style="text-align:left;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;">
@@ -4860,6 +4870,7 @@ function renderAdminUsers(users, tenants){
         <th style="padding:8px 12px;">Role</th>
         <th style="padding:8px 12px;">Tenant</th>
         <th style="padding:8px 12px;">Status</th>
+        ${reveal ? '<th style="padding:8px 12px;">Password</th>' : ''}
         <th style="padding:8px 12px;">Last login</th>
         <th style="padding:8px 12px;text-align:right;">Actions</th>
       </tr></thead>
@@ -4875,6 +4886,11 @@ function renderAdminUsers(users, tenants){
           const toggleBtn = active
             ? `<button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="toggleUserActive('${u.id}','${safeEmail}',false)">⏸ Deactivate</button>`
             : `<button class="btn btn-outline btn-xs" style="border-color:var(--success);color:var(--success);" onclick="toggleUserActive('${u.id}','${safeEmail}',true)">▶ Reactivate</button>`;
+          const pwdCell = reveal
+            ? `<td style="padding:8px 12px;">${u.password_plain
+                ? `<span style="font-family:'DM Mono',monospace;font-size:12px;">${String(u.password_plain).replace(/</g,'&lt;')}</span>`
+                : `<span style="color:var(--text-muted);font-size:11px;">— (reset to reveal)</span>`}</td>`
+            : '';
           return `
           <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};${active?'':'opacity:.55;'}">
             <td style="padding:8px 12px;">
@@ -4884,8 +4900,10 @@ function renderAdminUsers(users, tenants){
             <td style="padding:8px 12px;">${roleLabel}</td>
             <td style="padding:8px 12px;">${tName}</td>
             <td style="padding:8px 12px;">${statusBadge}</td>
+            ${pwdCell}
             <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;">${u.last_login_at ? fmtDate(u.last_login_at.slice(0,10)) : 'Never'}</td>
             <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
+              <button class="btn btn-outline btn-xs" onclick="openEditUserModal('${u.id}')">✏️ Edit</button>
               <button class="btn btn-outline btn-xs" onclick="openResetPasswordModal('${u.id}','${safeEmail}')">🔑 Reset</button>
               ${toggleBtn}
             </td>
@@ -4893,6 +4911,105 @@ function renderAdminUsers(users, tenants){
         }).join('')}
       </tbody>
     </table>`;
+}
+
+// ── Reveal / hide passwords — gated by the consultant access code ──
+function togglePasswordReveal(){
+  const btn = document.getElementById('revealPwdBtn');
+  if(_passwordsRevealed){
+    _passwordsRevealed = false;
+    if(btn) btn.innerHTML = '🔓 Reveal passwords';
+    renderAdminUsers(_adminUsersCache, _adminTenantsCache);
+    return;
+  }
+  const code = prompt('Enter the consultant access code to reveal passwords:');
+  if(code === null) return;
+  if(String(code).trim().toLowerCase() !== CONSULTANT_PASS.toLowerCase()){
+    showToast('Incorrect access code','error');
+    return;
+  }
+  _passwordsRevealed = true;
+  if(btn) btn.innerHTML = '🔒 Hide passwords';
+  renderAdminUsers(_adminUsersCache, _adminTenantsCache);
+  showToast('Passwords revealed','info');
+}
+
+// ── Edit user — change email, name, role, tenant and (optionally) password ──
+function openEditUserModal(userId){
+  const u = (_adminUsersCache||[]).find(x => String(x.id) === String(userId));
+  if(!u){ showToast('User not found','error'); return; }
+  const isConsultant = u.role === 'consultant';
+  const tenantOptions = (_adminTenantsCache||[])
+    .map(t => `<option value="${t.id}" ${t.id===u.tenant_id?'selected':''}>${t.name}</option>`).join('');
+  openModal('Edit user',
+    `<div style="display:flex;flex-direction:column;gap:12px;">
+       <div class="field-group">
+         <label class="field-label">Email</label>
+         <input type="email" id="mEditEmail" value="${String(u.email).replace(/"/g,'&quot;')}">
+       </div>
+       <div class="field-group">
+         <label class="field-label">Display name</label>
+         <input type="text" id="mEditName" value="${u.display_name?String(u.display_name).replace(/"/g,'&quot;'):''}">
+       </div>
+       <div class="field-group">
+         <label class="field-label">Role</label>
+         <select id="mEditRole" onchange="document.getElementById('mEditTenantGroup').style.display=this.value==='client_user'?'flex':'none';">
+           <option value="client_user" ${!isConsultant?'selected':''}>👤 Client user (logs into one tenant)</option>
+           <option value="consultant" ${isConsultant?'selected':''}>🛡️ Consultant (sees all tenants)</option>
+         </select>
+       </div>
+       <div class="field-group" id="mEditTenantGroup" style="${isConsultant?'display:none;':''}">
+         <label class="field-label">Tenant</label>
+         <select id="mEditTenant">
+           <option value="">— Pick a tenant —</option>
+           ${tenantOptions}
+         </select>
+       </div>
+       <div class="field-group">
+         <label class="field-label">New password (leave blank to keep current)</label>
+         <div style="display:flex;gap:6px;">
+           <input type="text" id="mEditPwd" placeholder="•••••••• (unchanged)" style="flex:1;">
+           <button class="btn btn-outline btn-sm" onclick="document.getElementById('mEditPwd').value=_generatePassword();" type="button">🎲 Generate</button>
+         </div>
+       </div>
+     </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="submitEditUser('${u.id}')">💾 Save changes</button>`
+  );
+}
+async function submitEditUser(userId){
+  const email       = document.getElementById('mEditEmail')?.value.trim();
+  const displayName = document.getElementById('mEditName')?.value.trim();
+  const role        = document.getElementById('mEditRole')?.value;
+  const tenantId    = document.getElementById('mEditTenant')?.value || null;
+  const password    = document.getElementById('mEditPwd')?.value || '';
+  if(!email){ showToast('Email required','error'); return; }
+  if(role === 'client_user' && !tenantId){ showToast('Client users must be assigned to a tenant','error'); return; }
+  if(password && password.length < 8){ showToast('Password must be at least 8 chars','error'); return; }
+  const body = { email, displayName, role, tenantId: role==='client_user'?tenantId:null };
+  if(password) body.password = password;
+  try {
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+      method:'PATCH', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const b = await res.json().catch(()=>({}));
+    if(!res.ok){
+      const msg = b.error === 'email_exists'                  ? 'A user with that email already exists'
+                : b.error === 'cannot_demote_self'            ? 'You cannot change your own role away from consultant.'
+                : b.error === 'tenant_required_for_client_user'? 'Client users must be assigned to a tenant.'
+                : b.error === 'valid_email_required'           ? 'Please enter a valid email.'
+                : `Failed: ${b.error||res.status}`;
+      showToast(msg,'error'); return;
+    }
+    closeModal();
+    showToast('✓ User updated','success');
+    renderAdminPane();
+  } catch(err){
+    console.error(err);
+    showToast('Network error saving user','error');
+  }
 }
 
 // ── Add Client modal ──
