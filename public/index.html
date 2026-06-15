@@ -4859,6 +4859,7 @@ function renderAdminUsers(users, tenants){
         <th style="padding:8px 12px;">Email</th>
         <th style="padding:8px 12px;">Role</th>
         <th style="padding:8px 12px;">Tenant</th>
+        <th style="padding:8px 12px;">Status</th>
         <th style="padding:8px 12px;">Last login</th>
         <th style="padding:8px 12px;text-align:right;">Actions</th>
       </tr></thead>
@@ -4866,18 +4867,27 @@ function renderAdminUsers(users, tenants){
         ${users.map((u,i) => {
           const tName = u.tenant_id ? (tenantById[u.tenant_id]?.name || u.tenant_id) : '—';
           const roleLabel = u.role === 'consultant' ? '🛡️ Consultant' : '👤 Client user';
+          const active = u.is_active !== false;
+          const safeEmail = u.email.replace(/'/g,"\\'");
+          const statusBadge = active
+            ? `<span style="font-size:11px;font-weight:600;color:var(--success);">● Active</span>`
+            : `<span style="font-size:11px;font-weight:600;color:var(--text-muted);">○ Inactive</span>`;
+          const toggleBtn = active
+            ? `<button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="toggleUserActive('${u.id}','${safeEmail}',false)">⏸ Deactivate</button>`
+            : `<button class="btn btn-outline btn-xs" style="border-color:var(--success);color:var(--success);" onclick="toggleUserActive('${u.id}','${safeEmail}',true)">▶ Reactivate</button>`;
           return `
-          <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};">
+          <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};${active?'':'opacity:.55;'}">
             <td style="padding:8px 12px;">
               <div style="font-weight:600;">${u.email}</div>
               ${u.display_name ? `<div style="font-size:11px;color:var(--text-muted);">${u.display_name}</div>` : ''}
             </td>
             <td style="padding:8px 12px;">${roleLabel}</td>
             <td style="padding:8px 12px;">${tName}</td>
+            <td style="padding:8px 12px;">${statusBadge}</td>
             <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;">${u.last_login_at ? fmtDate(u.last_login_at.slice(0,10)) : 'Never'}</td>
             <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
-              <button class="btn btn-outline btn-xs" onclick="openResetPasswordModal('${u.id}','${u.email.replace(/'/g,"\\'")}')">🔑 Reset</button>
-              <button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="deleteUser('${u.id}','${u.email.replace(/'/g,"\\'")}')">🗑 Delete</button>
+              <button class="btn btn-outline btn-xs" onclick="openResetPasswordModal('${u.id}','${safeEmail}')">🔑 Reset</button>
+              ${toggleBtn}
             </td>
           </tr>`;
         }).join('')}
@@ -5170,31 +5180,38 @@ async function submitResetPassword(userId, email){
   }
 }
 
-// ── Delete user — with self-delete guard server-side ──
-async function deleteUser(userId, email){
+// ── Deactivate / reactivate a user — with self-deactivate guard server-side ──
+// "Remove" means deactivate, not hard-delete: a deactivated login can no longer
+// sign in, but the user record and their inspection history are preserved and
+// it can be reversed at any time.
+async function toggleUserActive(userId, email, makeActive){
   const me = Auth.user();
-  if(me && String(me.id) === String(userId)){
-    showToast('You cannot delete your own account from here.','error');
+  if(!makeActive && me && String(me.id) === String(userId)){
+    showToast('You cannot deactivate your own account from here.','error');
     return;
   }
-  if(!confirm(`Permanently delete the user "${email}"?\n\nThey'll be unable to sign in. Any inspections they submitted stay on file under their tenant — only the login is removed. This cannot be undone.`)) return;
+  if(!makeActive){
+    if(!confirm(`Deactivate the user "${email}"?\n\nThey will no longer be able to sign in. Their account and any inspections on file are kept — you can reactivate them at any time.`)) return;
+  }
   try {
-    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
-      method: 'DELETE', credentials: 'include'
+    const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/active`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: makeActive })
     });
     if(!res.ok){
       const body = await res.json().catch(()=>({}));
-      const msg = body.error === 'cannot_delete_self' ? 'You cannot delete the account you are signed in as.'
-                : body.error === 'user_not_found'     ? 'User no longer exists.'
+      const msg = body.error === 'cannot_deactivate_self' ? 'You cannot deactivate the account you are signed in as.'
+                : body.error === 'user_not_found'         ? 'User no longer exists.'
                 : `Failed: ${body.error||res.status}`;
       showToast(msg, 'error');
       return;
     }
-    showToast(`✓ User "${email}" deleted`, 'success');
+    showToast(makeActive ? `✓ User "${email}" reactivated` : `✓ User "${email}" deactivated`, 'success');
     renderAdminPane();
   } catch(err){
     console.error(err);
-    showToast('Network error deleting user','error');
+    showToast(`Network error trying to ${makeActive ? 'reactivate' : 'deactivate'} user`,'error');
   }
 }
 

@@ -104,7 +104,7 @@ router.get('/users', async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT u.id, u.email, u.role, u.tenant_id, u.display_name,
-              u.created_at, u.last_login_at,
+              u.created_at, u.last_login_at, u.is_active,
               t.name AS tenant_name
          FROM users u
          LEFT JOIN tenants t ON t.id = u.tenant_id
@@ -183,19 +183,30 @@ router.post('/users/:id/reset-password', async (req, res) => {
   }
 });
 
-// DELETE /api/admin/users/:id — remove a user. Refuses to delete the
-// currently signed-in user (would lock them out of the admin panel).
-router.delete('/users/:id', async (req, res) => {
+// PATCH /api/admin/users/:id/active  body: { active: true|false }
+// Soft enable/disable a login. A deactivated user can no longer sign in, but
+// their record — and the inspection history under their tenant — is preserved.
+// We deactivate rather than hard-delete so nothing is ever lost and it is
+// fully reversible. Refuses to deactivate the currently signed-in user (would
+// otherwise lock them out of the admin panel).
+router.patch('/users/:id/active', async (req, res) => {
   const id = req.params.id;
-  if(req.user && String(req.user.id) === String(id)){
-    return res.status(400).json({ error: 'cannot_delete_self' });
+  if(typeof req.body?.active !== 'boolean'){
+    return res.status(400).json({ error: 'active_boolean_required' });
+  }
+  const active = req.body.active;
+  if(!active && req.user && String(req.user.id) === String(id)){
+    return res.status(400).json({ error: 'cannot_deactivate_self' });
   }
   try {
-    const r = await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
+    const r = await pool.query(
+      `UPDATE users SET is_active = $1 WHERE id = $2`,
+      [active, id]
+    );
     if(r.rowCount === 0){ return res.status(404).json({ error: 'user_not_found' }); }
-    res.json({ ok: true });
+    res.json({ ok: true, id, is_active: active });
   } catch(err){
-    console.error('DELETE /users/:id error:', err);
+    console.error('PATCH /users/:id/active error:', err);
     res.status(500).json({ error: 'server_error' });
   }
 });

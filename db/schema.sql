@@ -28,6 +28,12 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_email  ON users (LOWER(email));
 CREATE INDEX IF NOT EXISTS idx_users_tenant ON users (tenant_id);
 
+-- Soft-deactivation flag. An inactive user cannot log in, but their record
+-- (and any inspection history under their tenant) is preserved — we deactivate
+-- rather than hard-delete. Added via ALTER so it also applies to existing
+-- databases on deploy; DEFAULT TRUE backfills every existing user as active.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
 -- App state: one row per tenant holding the entire S blob from the frontend.
 -- Stored as JSONB so we can query inside it later if needed.
 CREATE TABLE IF NOT EXISTS app_state (

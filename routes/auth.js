@@ -21,7 +21,7 @@ router.post('/login', async (req, res) => {
 
   try {
     const r = await pool.query(
-      `SELECT id, email, password_hash, tenant_id, role, display_name
+      `SELECT id, email, password_hash, tenant_id, role, display_name, is_active
          FROM users WHERE LOWER(email) = $1 LIMIT 1`,
       [email]
     );
@@ -33,6 +33,12 @@ router.post('/login', async (req, res) => {
     const ok   = await bcrypt.compare(password, user.password_hash);
     if(!ok){
       return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // Deactivated accounts cannot sign in. Checked only after the password is
+    // verified, so this never reveals account status to an unauthenticated guess.
+    if(user.is_active === false){
+      return res.status(403).json({ error: 'account_deactivated' });
     }
 
     // Record login time (best-effort, don't block response)
@@ -101,7 +107,7 @@ router.get('/me', requireAuth, async (req, res) => {
   // Re-read from DB so we get the latest tenant + role (in case of recent changes)
   try {
     const r = await pool.query(
-      `SELECT u.id, u.email, u.tenant_id, u.role, u.display_name,
+      `SELECT u.id, u.email, u.tenant_id, u.role, u.display_name, u.is_active,
               t.name AS tenant_name
          FROM users u
          LEFT JOIN tenants t ON t.id = u.tenant_id
@@ -111,6 +117,11 @@ router.get('/me', requireAuth, async (req, res) => {
     if(!r.rows.length){
       clearSessionCookie(res);
       return res.status(401).json({ error: 'user_not_found' });
+    }
+    // If the account was deactivated since this session was issued, sign them out.
+    if(r.rows[0].is_active === false){
+      clearSessionCookie(res);
+      return res.status(401).json({ error: 'account_deactivated' });
     }
     const u = r.rows[0];
     res.json({
