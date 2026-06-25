@@ -78,7 +78,7 @@ main{max-width:860px;margin:0 auto;padding:24px 20px 56px;}
 .field-group{display:flex;flex-direction:column;gap:5px;}
 .field-group.span-2{grid-column:1/-1;}
 .field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);}
-input[type="text"],input[type="date"],input[type="month"],input[type="number"],select,textarea{
+input[type="text"],input[type="date"],input[type="datetime-local"],input[type="time"],input[type="month"],input[type="number"],select,textarea{
   font-family:'DM Sans',sans-serif;font-size:14px;color:var(--text);background:var(--input-bg);
   border:1.5px solid var(--border);border-radius:6px;padding:9px 11px;outline:none;width:100%;
   -webkit-appearance:none;transition:border-color .15s,box-shadow .15s;
@@ -359,6 +359,22 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 .lightbox-close{position:fixed;top:16px;right:20px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:22px;width:40px;height:40px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;}
 .lightbox-close:hover{background:rgba(255,255,255,.3);}
 
+/* ── Consultant Audit Mode ── */
+#consultantBar{display:none;background:#0f766e;color:#fff;border-bottom:2px solid #0b5d56;}
+#consultantBar.on{display:block;}
+.cbar-inner{max-width:860px;margin:0 auto;padding:8px 20px;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;font-size:13px;}
+.cbar-eye{font-size:15px;}
+.cbar-name{font-weight:700;}
+.cbar-ro{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);border-radius:12px;padding:2px 9px;}
+.cbar-spacer{flex:1;}
+.cbar-btn{font-size:12px;font-weight:700;border-radius:6px;border:1.5px solid rgba(255,255,255,.5);background:transparent;color:#fff;padding:6px 12px;cursor:pointer;white-space:nowrap;}
+.cbar-btn:hover{background:rgba(255,255,255,.15);}
+.cbar-btn.solid{background:#fff;color:#0f766e;border-color:#fff;}
+.cbar-fresh{font-size:11px;opacity:.85;}
+#consultantPicker{display:none;}
+#consultantPicker.on{display:inline-flex;align-items:center;gap:6px;}
+#consultantPicker select{min-height:36px;padding:6px 26px 6px 10px;font-size:13px;max-width:200px;}
+
 /* ── Responsive: phones & small tablets ── */
 @media(max-width:640px){
   html,body{overflow-x:hidden;}
@@ -426,6 +442,21 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
   </div>
 </div>
 
+<!-- Client Review modal (consultant audit mode) -->
+<div class="modal-bg" id="clientReviewModal">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-title">
+      <span>📋 Client review — <span id="crClientName"></span></span>
+      <button class="modal-close" onclick="closeClientReview()">✕</button>
+    </div>
+    <div id="crBody" style="display:flex;flex-direction:column;gap:18px;"></div>
+    <div class="modal-actions" style="margin-top:18px;">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeClientReview()">Close</button>
+      <button type="button" class="btn btn-primary" onclick="downloadFeedbackPDF()">📄 Download feedback report</button>
+    </div>
+  </div>
+</div>
+
 <!-- Lightbox -->
 <div class="lightbox-bg" id="lightboxBg" onclick="closeLightbox(event)">
   <div class="lightbox-inner" onclick="event.stopPropagation()">
@@ -473,6 +504,12 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       <span class="save-indicator" id="saveIndicator"></span>
       <!-- User indicator: shows current signed-in user when authenticated -->
       <span id="userIndicator" class="no-print" style="display:none;font-size:11px;color:var(--text-muted);padding:4px 10px;background:var(--accent-light);border:1px solid var(--accent);border-radius:14px;font-weight:600;"></span>
+      <!-- Consultant client picker (consultants only) -->
+      <span id="consultantPicker" class="no-print" title="Dial in to a client to review their data">
+        <select id="consultantClientSelect" onchange="onConsultantPick(this.value)">
+          <option value="">My workspace</option>
+        </select>
+      </span>
       <!-- Sign-in / Sign-out button -->
       <button class="btn btn-ghost btn-sm no-print" id="signInBtn" onclick="openLoginModal()" title="Sign in to sync to the server" style="color:var(--text-muted);border-color:var(--border);display:none;">🔐 Sign in</button>
       <button class="btn btn-ghost btn-sm no-print" id="signOutBtn" onclick="handleSignOut()" title="Sign out — switches back to local-only mode" style="color:var(--text-muted);border-color:var(--border);display:none;">Sign out</button>
@@ -497,6 +534,20 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     <button class="tab-btn" data-tab="setup" onclick="switchTab('setup')">⚙️ Checklist Builder</button>
   </div>
 </nav>
+
+<!-- ══════════ CONSULTANT READ-ONLY BANNER ══════════ -->
+<div id="consultantBar" class="no-print">
+  <div class="cbar-inner">
+    <span class="cbar-eye">👁</span>
+    <span>Viewing <span class="cbar-name" id="cbarClientName">client</span></span>
+    <span class="cbar-ro">Read only</span>
+    <span class="cbar-fresh" id="cbarFresh"></span>
+    <span class="cbar-spacer"></span>
+    <button class="cbar-btn" onclick="refreshConsultantView()">↻ Refresh</button>
+    <button class="cbar-btn solid" onclick="openClientReview()">📋 Client review</button>
+    <button class="cbar-btn" onclick="exitConsultantView()">✕ Return to my workspace</button>
+  </div>
+</div>
 
 <main>
 
@@ -2684,6 +2735,7 @@ function cacheRD(itemId) {
 //  SUBMIT
 // ══════════════════════════════════════════════════════════════
 function submitInspection() {
+  if(_blockIfReadOnly()) return null;
   flushDraft();
   const d=S.draft;
   const activeType = S.inspectionTypes?.[d.typeId];
@@ -2997,6 +3049,7 @@ function _convertBlobToPng(blob){
 }
 
 function startNewDraft() {
+  if(_blockIfReadOnly()) return;
   if(!confirm('Clear current draft?')) return;
   const iso=d=>d.toISOString().split('T')[0]; const today=iso(new Date());
   const keepTypeId = S.draft?.typeId || 'garage_inspection';
@@ -3122,6 +3175,7 @@ function renderActions() {
 }
 
 function resolveAction(id){
+  if(_blockIfReadOnly()) return;
   const a=S.actions.find(x=>x.id===id); if(!a) return;
   const by=document.getElementById('rb-'+id)?.value.trim();
   const dt=document.getElementById('rd-'+id)?.value;
@@ -3168,6 +3222,7 @@ function resolveAction(id){
 // off. Until then, even with all actions resolved, it stays 'open'.
 // This is the gate that prevents premature PDF generation / handover.
 function signOffInspection(inspId){
+  if(_blockIfReadOnly()) return;
   const insp = S.inspections.find(i => i.id === inspId);
   if(!insp){ showToast('Inspection not found','error'); return; }
   if(insp.status === 'signed_off'){
@@ -3746,6 +3801,7 @@ function populateAuditForm(){
 }
 
 function saveAudit(){
+  if(_blockIfReadOnly()) return;
   const coms={}; S.checklist.forEach(s=>{coms[s.id]=document.getElementById('asc-'+s.id)?.value||'';});
   S.audit={...S.audit,sectionComments:coms,
     date:document.getElementById('auditDate').value,auditor:document.getElementById('auditorName').value.trim(),
@@ -4599,6 +4655,10 @@ function flushDraft(){
 }
 
 function saveData(){
+  // Consultant read-only view: never write anywhere (not localStorage, not the
+  // server). This is the hard guarantee that viewing a client cannot overwrite
+  // their data. See the Consultant Audit Mode module below.
+  if(_consultantView) return;
   flushDraft();
   const payload={meta:{version:3,savedAt:new Date().toISOString(),appKey:'ahs:workplace-inspection:v3'},S};
   // Always write to localStorage as a cache / offline fallback
@@ -4639,6 +4699,9 @@ async function loadFromServerAndRender(){
     showToast('✓ Loaded from server','info');
     return true;
   }
+  // Consultants have no tenant of their own — they dial in to clients via the
+  // picker. Don't offer to upload the consultant's local workspace anywhere.
+  if(Auth.user()?.role === 'consultant') return false;
   // Server is empty: offer to push local data up (one-time migration)
   if(localStorage.getItem('ahs:workplace-inspection:v3')){
     if(confirm('No data found on the server for your account. Would you like to upload your local data to the server?')){
@@ -4733,6 +4796,12 @@ function _updateAuthIndicator(){
     }
     // Show the Admin nav button only for consultants
     if(adminNav) adminNav.style.display = (user.role === 'consultant') ? 'inline-flex' : 'none';
+    // Consultant client picker (dial in to a client)
+    const cPick = document.getElementById('consultantPicker');
+    if(cPick){
+      if(user.role === 'consultant'){ cPick.classList.add('on'); populateClientPicker(); }
+      else cPick.classList.remove('on');
+    }
   } else {
     if(inBtn)  inBtn.style.display  = 'inline-flex';
     if(outBtn) outBtn.style.display = 'none';
@@ -4741,6 +4810,9 @@ function _updateAuthIndicator(){
       ind.onclick = null;
     }
     if(adminNav) adminNav.style.display = 'none';
+    const cPick = document.getElementById('consultantPicker');
+    if(cPick) cPick.classList.remove('on');
+    if(_consultantView) exitConsultantView(true);
   }
   // Refresh dashboard visibility
   renderManagerDashboard();
@@ -8080,6 +8152,329 @@ const Auth = (() => {
 
   return { login, logout, refresh, user, isSignedIn, activeTenantId, setActiveTenant, loadFromServer, saveToServer };
 })();
+
+// ══════════════════════════════════════════════════════════════
+//  CONSULTANT AUDIT MODE
+//  Lets a consultant dial in to a client, view their data read only,
+//  refresh it, score quality and progress, and generate a feedback PDF.
+//  Frontend only: the server already lets a consultant read any tenant.
+//  While a client is being viewed, saveData() is a no op, so nothing the
+//  consultant does can ever be written back to the client's data.
+// ══════════════════════════════════════════════════════════════
+let _consultantView    = null;  // null = own workspace; else { tenantId, name }
+let _consultantPoll    = null;  // polling timer id
+let _consultantLastUpd = null;  // last seen server updatedAt, for change detection
+let _consultantTenants = [];    // cached tenant list for the picker
+
+// Returns true (and warns) if a mutating action is attempted while viewing a client.
+function _blockIfReadOnly(){
+  if(_consultantView){
+    showToast('Read only — you are viewing ' + _consultantView.name, 'info');
+    return true;
+  }
+  return false;
+}
+
+async function populateClientPicker(){
+  const sel = document.getElementById('consultantClientSelect');
+  if(!sel) return;
+  try {
+    const r = await fetch('/api/admin/tenants', { credentials:'include' }).then(r=>r.json());
+    _consultantTenants = r.tenants || [];
+  } catch(e){ _consultantTenants = []; }
+  const cur = _consultantView?.tenantId || '';
+  sel.innerHTML = '<option value="">My workspace</option>' +
+    _consultantTenants.map(t => `<option value="${t.id}"${t.id===cur?' selected':''}>${(t.name||t.id)}</option>`).join('');
+}
+
+function onConsultantPick(tenantId){
+  if(!tenantId){ exitConsultantView(); return; }
+  const t = _consultantTenants.find(x => x.id === tenantId);
+  enterConsultantView(tenantId, t?.name || tenantId);
+}
+
+async function _fetchTenantState(tenantId){
+  return fetch(`/api/state?tenantId=${encodeURIComponent(tenantId)}`, { credentials:'include' }).then(r=>r.json());
+}
+
+async function enterConsultantView(tenantId, name){
+  let payload;
+  try { payload = await _fetchTenantState(tenantId); }
+  catch(e){ showToast('Could not load that client','error'); return; }
+  _consultantView    = { tenantId, name };
+  Auth.setActiveTenant(tenantId);
+  _consultantLastUpd = payload?.updatedAt || null;
+  // Swap the in-memory state for the client's. It is never saved back.
+  S = (payload && payload.state && typeof payload.state === 'object' && Object.keys(payload.state).length)
+        ? payload.state : _emptyConsultantState();
+  migrateLoadedState();
+  _rerenderEverything();
+  _applyConsultantChrome();
+  _startConsultantPoll();
+  switchTab('monthly');
+  showToast('👁 Viewing ' + name + ' (read only)','info');
+}
+
+function exitConsultantView(silent){
+  _stopConsultantPoll();
+  const was = _consultantView;
+  _consultantView    = null;
+  _consultantLastUpd = null;
+  Auth.setActiveTenant(Auth.user()?.tenantId || null);
+  // Restore the consultant's own local workspace (untouched during the view).
+  loadData();
+  migrateLoadedState();
+  _rerenderEverything();
+  _applyConsultantChrome();
+  const sel = document.getElementById('consultantClientSelect');
+  if(sel) sel.value = '';
+  if(!silent && was) showToast('Returned to your workspace','info');
+}
+
+function _applyConsultantChrome(){
+  const bar = document.getElementById('consultantBar');
+  if(_consultantView){
+    const nameEl = document.getElementById('cbarClientName');
+    if(nameEl) nameEl.textContent = _consultantView.name;
+    _setFreshLabel();
+    if(bar) bar.classList.add('on');
+    document.body.classList.add('consultant-ro');
+  } else {
+    if(bar) bar.classList.remove('on');
+    document.body.classList.remove('consultant-ro');
+  }
+}
+
+function _setFreshLabel(){
+  const el = document.getElementById('cbarFresh');
+  if(!el) return;
+  el.textContent = _consultantLastUpd
+    ? '· updated ' + new Date(_consultantLastUpd).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})
+    : '';
+}
+
+async function refreshConsultantView(){
+  if(!_consultantView) return;
+  try {
+    const payload = await _fetchTenantState(_consultantView.tenantId);
+    const upd = payload?.updatedAt || null;
+    if(upd !== _consultantLastUpd){
+      _consultantLastUpd = upd;
+      S = (payload && payload.state && Object.keys(payload.state).length) ? payload.state : _emptyConsultantState();
+      migrateLoadedState();
+      _rerenderEverything();
+      showToast('↻ Updated','info');
+    }
+    _setFreshLabel();
+  } catch(e){ /* keep showing the last good copy */ }
+}
+
+function _startConsultantPoll(){ _stopConsultantPoll(); _consultantPoll = setInterval(refreshConsultantView, 30000); }
+function _stopConsultantPoll(){ if(_consultantPoll){ clearInterval(_consultantPoll); _consultantPoll = null; } }
+
+function _emptyConsultantState(){
+  return { checklist:[], inspectionTypes:buildDefaultInspectionTypes(),
+    draft:{typeId:'garage_inspection',results:{},notes:{},actionDetails:{},rectifyDetails:{},formData:{},periodFrom:'',periodTo:'',manager:'',location:'',ref:'',freq:'weekly',generalNotes:'',title:'',inspType:''},
+    inspections:[], actions:[], audit:{}, templates:[], activeClient:null, branding:S.branding };
+}
+
+// ── 2B/2C: scorecard, quality rating, feedback report ───────────────
+// Ratings and feedback are the CONSULTANT's own notes about a client, kept in
+// the consultant's browser under their own keys. They are never written into
+// the client's state, so the read-only guarantee is preserved.
+function _crRatingKey(tid){   return 'ahs:consultant:rating:'   + tid; }
+function _crFeedbackKey(tid){ return 'ahs:consultant:feedback:' + tid; }
+function _crLoad(key, fallback){ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; }catch(e){ return fallback; } }
+function _crSave(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
+
+let _crPendingScore = 0;
+
+// Compute the progress + quality scorecard from the viewed client's data.
+function consultantScorecard(){
+  const insps = S.inspections || [];
+  const acts  = S.actions || [];
+  const today = new Date().toISOString().split('T')[0];
+  const signedOff = insps.filter(i => i.status === 'signed_off').length;
+  const awaiting  = insps.filter(i => i.awaitingReview && i.status !== 'signed_off').length;
+  // Compliance: pass+rectified out of pass+rectified+action across checklist items
+  let pass=0, rect=0, act=0;
+  insps.forEach(i => {
+    const r = i.results || {};
+    Object.values(r).forEach(v => { if(v==='pass')pass++; else if(v==='rectified')rect++; else if(v==='action')act++; });
+  });
+  const compBase = pass+rect+act;
+  const compliance = compBase ? Math.round((pass+rect)/compBase*100) : null;
+  const openActions    = acts.filter(a => !a.resolved).length;
+  const overdueActions = acts.filter(a => !a.resolved && a.dueDate && a.dueDate < today).length;
+  const resolved       = acts.filter(a => a.resolved).length;
+  // Average days to resolve (resolved date minus parent inspection submit date)
+  let days=[], n=0;
+  acts.forEach(a => {
+    if(!a.resolved || !a.resolvedAt) return;
+    const parent = insps.find(i => i.id === a.inspId);
+    const raised = parent?.submittedAt || a.periodTo;
+    if(!raised) return;
+    const d = (new Date(a.resolvedAt) - new Date(raised)) / 86400000;
+    if(isFinite(d) && d >= 0){ days.push(d); n++; }
+  });
+  const avgResolveDays = n ? Math.round(days.reduce((x,y)=>x+y,0)/n) : null;
+  // Trend: inspections submitted in each of the last 3 calendar months
+  const trend = [];
+  const now = new Date();
+  for(let k=2;k>=0;k--){
+    const m = new Date(now.getFullYear(), now.getMonth()-k, 1);
+    const key = m.getFullYear() + '-' + String(m.getMonth()+1).padStart(2,'0');
+    const label = m.toLocaleDateString('en-GB',{month:'short'});
+    const count = insps.filter(i => (i.submittedAt||i.periodTo||'').slice(0,7) === key).length;
+    trend.push({ label, count });
+  }
+  return { total:insps.length, signedOff, awaiting, compliance, openActions, overdueActions, resolved, avgResolveDays, trend };
+}
+
+function openClientReview(){
+  if(!_consultantView) return;
+  document.getElementById('crClientName').textContent = _consultantView.name;
+  _crPendingScore = 0;
+  renderClientReview();
+  document.getElementById('clientReviewModal').classList.add('open');
+}
+function closeClientReview(){
+  document.getElementById('clientReviewModal').classList.remove('open');
+}
+
+function renderClientReview(){
+  const tid = _consultantView?.tenantId; if(!tid) return;
+  const sc = consultantScorecard();
+  const ratings = _crLoad(_crRatingKey(tid), []);
+  const fb = _crLoad(_crFeedbackKey(tid), { feedback:'', suggestions:'' });
+  const stat = (label, val, sub, colour) =>
+    `<div style="background:var(--muted-bg);border:1px solid var(--border);border-radius:9px;padding:11px 13px;">
+      <div style="font-size:22px;font-weight:800;line-height:1;color:${colour||'var(--text)'};">${val}</div>
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-top:4px;">${label}</div>
+      ${sub?`<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${sub}</div>`:''}
+    </div>`;
+  const trendTxt = sc.trend.map(t => `${t.label} ${t.count}`).join('  ·  ');
+  const stars = [1,2,3,4,5].map(n =>
+    `<button type="button" onclick="setClientRating(${n})" title="${n} of 5" style="font-size:24px;line-height:1;background:none;border:none;cursor:pointer;padding:2px;color:${n<=_crPendingScore?'#f59e0b':'var(--border)'};">★</button>`).join('');
+  const ratingHist = ratings.length
+    ? ratings.slice(-5).reverse().map(r => `<div style="font-size:12px;color:var(--text-muted);">${fmtDate(r.date)} — ${'★'.repeat(r.score)}${r.note?' · '+r.note:''}</div>`).join('')
+    : `<div style="font-size:12px;color:var(--text-muted);">No ratings recorded yet.</div>`;
+
+  document.getElementById('crBody').innerHTML = `
+    <div>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:8px;">Progress</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;">
+        ${stat('Inspections', sc.total, sc.signedOff+' signed off')}
+        ${stat('Awaiting review', sc.awaiting, '', sc.awaiting?'var(--warning)':'var(--text)')}
+        ${stat('Compliance', sc.compliance==null?'—':sc.compliance+'%', 'pass + rectified')}
+        ${stat('Open actions', sc.openActions, sc.overdueActions+' overdue', sc.overdueActions?'var(--danger)':'var(--text)')}
+        ${stat('Resolved', sc.resolved, '')}
+        ${stat('Avg resolve', sc.avgResolveDays==null?'—':sc.avgResolveDays+'d', 'days to close')}
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">Inspections per month:  ${trendTxt}</div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);padding-top:14px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:6px;">Quality rating</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div id="crStars">${stars}</div>
+        <input type="text" id="crRatingNote" placeholder="Optional note" style="flex:1;min-width:160px;">
+        <button type="button" class="btn btn-outline btn-sm" onclick="addClientRating()">Save rating</button>
+      </div>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px;">${ratingHist}</div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);padding-top:14px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:6px;">Feedback to the client</div>
+      <textarea id="crFeedback" rows="4" placeholder="Your assessment of how this client is doing." oninput="saveFeedbackDraft()">${fb.feedback||''}</textarea>
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin:12px 0 6px;">Suggestions for better ways of working</div>
+      <textarea id="crSuggestions" rows="4" placeholder="Practical suggestions the client can act on." oninput="saveFeedbackDraft()">${fb.suggestions||''}</textarea>
+    </div>`;
+}
+
+function setClientRating(n){ _crPendingScore = n; renderClientReview(); }
+function addClientRating(){
+  const tid = _consultantView?.tenantId; if(!tid) return;
+  if(!_crPendingScore){ showToast('Pick a star rating first','info'); return; }
+  const note = document.getElementById('crRatingNote')?.value.trim() || '';
+  const ratings = _crLoad(_crRatingKey(tid), []);
+  ratings.push({ date: new Date().toISOString().split('T')[0], score:_crPendingScore, note });
+  _crSave(_crRatingKey(tid), ratings);
+  _crPendingScore = 0;
+  showToast('✓ Rating saved','success');
+  renderClientReview();
+}
+function saveFeedbackDraft(){
+  const tid = _consultantView?.tenantId; if(!tid) return;
+  _crSave(_crFeedbackKey(tid), {
+    feedback:    document.getElementById('crFeedback')?.value || '',
+    suggestions: document.getElementById('crSuggestions')?.value || ''
+  });
+}
+
+function downloadFeedbackPDF(){
+  const tid = _consultantView?.tenantId; if(!tid){ showToast('Open a client first','error'); return; }
+  saveFeedbackDraft();
+  try { buildFeedbackPDF(); }
+  catch(e){ console.error('Feedback PDF failed:', e); showToast('Could not build the PDF — see console','error'); }
+}
+
+function buildFeedbackPDF(){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const tid = _consultantView.tenantId;
+  const client = _consultantView.name;
+  const sc = consultantScorecard();
+  const ratings = _crLoad(_crRatingKey(tid), []);
+  const fb = _crLoad(_crFeedbackKey(tid), { feedback:'', suggestions:'' });
+  const consultant = Auth.user()?.name || Auth.user()?.email || 'AHS Consultant';
+  const ML = 16, RM = 194; let y = 18;
+  const line = (txt, size, bold, colour) => {
+    doc.setFont('helvetica', bold?'bold':'normal'); doc.setFontSize(size);
+    doc.setTextColor(colour?colour[0]:60, colour?colour[1]:60, colour?colour[2]:60);
+    const wrapped = doc.splitTextToSize(txt, RM-ML);
+    wrapped.forEach(w => { if(y>275){ doc.addPage(); y=18; } doc.text(w, ML, y); y += size*0.52; });
+  };
+  const gap = h => { y += h; };
+  // Header band
+  doc.setFillColor(15,118,110); doc.rect(0,0,210,26,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text('Consultant Review & Feedback', ML, 12);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text(client, ML, 19);
+  y = 36;
+  line('Prepared by: ' + consultant, 10, false);
+  line('Date: ' + new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}), 10, false);
+  gap(3);
+  line('Progress summary', 12, true, [15,118,110]); gap(1);
+  const rows = [
+    ['Inspections recorded', String(sc.total) + ' (' + sc.signedOff + ' signed off, ' + sc.awaiting + ' awaiting review)'],
+    ['Compliance', sc.compliance==null?'No data':sc.compliance+'% of items pass or rectified'],
+    ['Open actions', String(sc.openActions) + ' (' + sc.overdueActions + ' overdue)'],
+    ['Actions resolved', String(sc.resolved)],
+    ['Average time to close an action', sc.avgResolveDays==null?'No data':sc.avgResolveDays+' days'],
+    ['Inspections per month', sc.trend.map(t=>t.label+': '+t.count).join(',  ')]
+  ];
+  rows.forEach(r => line(r[0] + ': ' + r[1], 10, false));
+  gap(3);
+  if(ratings.length){
+    const last = ratings[ratings.length-1];
+    line('Quality rating', 12, true, [15,118,110]); gap(1);
+    line('Latest: ' + last.score + ' of 5' + (last.note?' (' + last.note + ')':'') + ' on ' + fmtDate(last.date), 10, false);
+    gap(3);
+  }
+  line('Feedback', 12, true, [15,118,110]); gap(1);
+  line(fb.feedback || 'No feedback entered.', 10, false);
+  gap(3);
+  line('Suggestions for better ways of working', 12, true, [15,118,110]); gap(1);
+  line(fb.suggestions || 'No suggestions entered.', 10, false);
+  // Footer
+  doc.setFontSize(8); doc.setTextColor(150,150,150);
+  doc.text('AHS - Archer Health & Safety  ·  Confidential client feedback', ML, 290);
+  const safe = client.replace(/[^a-z0-9]+/gi,'-').toLowerCase();
+  doc.save('feedback-' + safe + '-' + new Date().toISOString().split('T')[0] + '.pdf');
+  showToast('📄 Feedback report downloaded','success');
+}
 
 let _toastTimer=null;
 function showToast(msg,type='success'){
