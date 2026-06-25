@@ -359,6 +359,24 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 .lightbox-close{position:fixed;top:16px;right:20px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:22px;width:40px;height:40px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;}
 .lightbox-close:hover{background:rgba(255,255,255,.3);}
 
+/* ── Responsive: phones & small tablets ── */
+@media(max-width:640px){
+  html,body{overflow-x:hidden;}
+  /* Header and tab bar drop sticky on small screens so a wrapped header
+     can't overlap the tabs; everything stays visible without h-scroll. */
+  .app-header,.tab-bar{position:static;}
+  .header-inner{height:auto;flex-wrap:wrap;padding:10px 14px;gap:8px 12px;}
+  .header-right{flex-wrap:wrap;justify-content:flex-end;}
+  .tab-bar-inner{padding:0 14px;}
+  main{padding:18px 14px 48px;}
+  .card-body{padding:16px;}
+  .card-band{padding:12px 14px;}
+  .tab-btn{padding:12px 12px 9px;font-size:12px;}
+  .modal,.drilldown-modal{max-width:100%;}
+  .modal-actions{flex-wrap:wrap;}
+  .drilldown-bg{padding:40px 12px 12px;}
+}
+
 @media print{
   .app-header,.tab-bar,.no-print{display:none!important;}
   body{background:#fff;}
@@ -525,48 +543,13 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
             <input type="text" id="inspTitle" placeholder="e.g. March Weekly Workshop Inspection" oninput="scheduleAutoSave();updateHeaderTitle()">
           </div>
         </div>
-        <!-- Row 1: Type + Frequency -->
+        <!-- Row 1: Date + Completed By -->
         <div class="field-grid" style="margin-bottom:14px;">
-          <div class="field-group">
-            <label class="field-label">Inspection Type / Category</label>
-            <select id="inspType" onchange="scheduleAutoSave()">
-              <option value="">— Select type —</option>
-              <option value="general">General Workplace</option>
-              <option value="fire">Fire Safety</option>
-              <option value="coshh">COSHH / Hazardous Substances</option>
-              <option value="manual_handling">Manual Handling</option>
-              <option value="work_at_height">Work at Height</option>
-              <option value="electrical">Electrical Safety</option>
-              <option value="plant_equipment">Plant &amp; Equipment</option>
-              <option value="welfare">Welfare Facilities</option>
-              <option value="environmental">Environmental</option>
-              <option value="construction">Construction / CDM</option>
-              <option value="other">Other / Custom</option>
-            </select>
-          </div>
-          <div class="field-group">
-            <label class="field-label">Frequency this period</label>
-            <select id="inspFreq" onchange="scheduleAutoSave()">
-              <option value="weekly">Weekly</option>
-              <option value="bimonthly">Bi-Monthly</option>
-              <option value="monthly">Monthly</option>
-              <option value="quarterly">Quarterly</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-        </div>
-        <!-- Row 2 (period mode — used for walkrounds and most types): Period From + Period To -->
-        <div class="field-grid" id="periodRangeRow" style="margin-bottom:14px;">
-          <div class="field-group"><label class="field-label">Period From</label><input type="date" id="periodFrom" oninput="scheduleAutoSave()"></div>
-          <div class="field-group"><label class="field-label">Period To</label><input type="date" id="periodTo" oninput="scheduleAutoSave()"></div>
-        </div>
-        <!-- Row 2 (single-date mode — used for MOT Q/C and any one-off type) -->
-        <div class="field-grid cols-1" id="singleDateRow" style="display:none;margin-bottom:14px;">
-          <div class="field-group"><label class="field-label" id="singleDateLabel">Test date</label><input type="date" id="singleDate" oninput="onSingleDateChange()"></div>
-        </div>
-        <!-- Row 3: Completed By + Location -->
-        <div class="field-grid" style="margin-bottom:14px;">
+          <div class="field-group"><label class="field-label">Date</label><input type="date" id="inspDate" oninput="onInspDateChange()"></div>
           <div class="field-group"><label class="field-label">Completed By</label><input type="text" id="managerName" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Full name" oninput="scheduleAutoSave()"></div>
+        </div>
+        <!-- Row 2: Location full width -->
+        <div class="field-grid cols-1" style="margin-bottom:14px;">
           <div class="field-group"><label class="field-label">Workplace / Location</label><input type="text" id="workshopLoc" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="e.g. Unit 5 Workshop" oninput="scheduleAutoSave()"></div>
         </div>
         <!-- Row 4: Reference full width — clean finish -->
@@ -1575,6 +1558,7 @@ const FORMS = {
           { id:'contracted_start',  type:'text',     label:'Contracted start time of employee', required:true, placeholder:'e.g. 08:00', halfWidth:true },
           { id:'reason',            type:'textarea', label:'Reason for late arrival', required:true },
           { id:'support_needed',    type:'select',   label:'Does the employee require any support with this matter?', required:true, options:YES_NO_NA },
+          { id:'support_comments',  type:'textarea', label:'Support required — record the response verbatim', showIf:{field:'support_needed', equals:'yes'}, placeholder:'Record the employee’s response word for word.' },
           { id:'support_evidence',  type:'photo',    label:'Evidence (photo)', showIf:{field:'support_needed', equals:'yes'} },
           { id:'signed_date',       type:'date',     label:'Date signed', required:true },
           { id:'signed',            type:'signature',label:'Signed', required:true }
@@ -1836,9 +1820,8 @@ function setDefaultDates() {
   const today = new Date();
   const iso = d=>d.toISOString().split('T')[0];
   if (!S.draft.periodFrom) {
-    const mon = new Date(today); mon.setDate(today.getDate()-(today.getDay()||7)+1);
-    const fri = new Date(mon);   fri.setDate(mon.getDate()+4);
-    S.draft.periodFrom = iso(mon); S.draft.periodTo = iso(fri);
+    // Inspection date defaults to today (single date; stored as from===to)
+    S.draft.periodFrom = iso(today); S.draft.periodTo = iso(today);
   }
   // Monthly report date range: intentionally left blank by default so the
   // user sees ALL inspections in the report straight away. The Date Range
@@ -1851,50 +1834,29 @@ function setDefaultDates() {
 
 function populateInspectionForm() {
   const d = S.draft;
-  const sv=(id,v)=>{if(v)document.getElementById(id).value=v;};
-  sv('periodFrom',d.periodFrom); sv('periodTo',d.periodTo); sv('managerName',d.manager);
+  const sv=(id,v)=>{const el=document.getElementById(id);if(el&&v)el.value=v;};
+  // Title auto-fills from the chosen inspection type if not already set
+  if(!d.title){ d.title = S.inspectionTypes?.[d.typeId]?.name || ''; }
+  sv('inspDate',d.periodFrom); sv('managerName',d.manager);
   sv('workshopLoc',d.location);  sv('inspRef',d.ref); sv('generalNotes',d.generalNotes);
-  sv('inspTitle',d.title||''); sv('inspType',d.inspType||'');
-  if(d.freq) document.getElementById('inspFreq').value=d.freq;
+  sv('inspTitle',d.title||'');
   document.getElementById('draftBadge').style.display='inline-flex';
-  // Show the right date row for the active type (period-range vs single date)
   applyDateRowMode();
   updateHeaderTitle();
 }
 
-// Inspection types where a date RANGE makes no sense — they're one-off
-// observations of a single test/event. Show a single "Test date" field
-// instead of Period From / Period To.
-const SINGLE_DATE_TYPES = ['mot_qc'];
-const SINGLE_DATE_LABELS = { mot_qc: 'Test date' };
-
+// Inspections now use a single Date field. It is stored as periodFrom===periodTo
+// so all existing storage / PDF / report code is unchanged.
 function applyDateRowMode(){
-  const typeId   = S.draft?.typeId;
-  const isSingle = SINGLE_DATE_TYPES.includes(typeId);
-  const rangeRow = document.getElementById('periodRangeRow');
-  const singleRow= document.getElementById('singleDateRow');
-  const label    = document.getElementById('singleDateLabel');
-  const single   = document.getElementById('singleDate');
-  if(!rangeRow || !singleRow) return;
-  if(isSingle){
-    rangeRow.style.display  = 'none';
-    singleRow.style.display = '';
-    if(label) label.textContent = SINGLE_DATE_LABELS[typeId] || 'Date';
-    // Hydrate the single-date input from the draft (use periodTo as the
-    // single source of truth — periodFrom is auto-mirrored).
-    if(single) single.value = S.draft?.periodTo || S.draft?.periodFrom || '';
-  } else {
-    rangeRow.style.display  = '';
-    singleRow.style.display = 'none';
-  }
+  // Hydrate the single Date input from the draft.
+  const single = document.getElementById('inspDate');
+  if(single) single.value = S.draft?.periodFrom || S.draft?.periodTo || '';
 }
 
-// User typed into the single-date input — mirror to both periodFrom + periodTo
-// so the existing storage / PDF / report code is unchanged.
-function onSingleDateChange(){
-  const v = document.getElementById('singleDate')?.value || '';
-  const f = document.getElementById('periodFrom'); if(f) f.value = v;
-  const t = document.getElementById('periodTo');   if(t) t.value = v;
+// User typed into the Date input — mirror to both periodFrom + periodTo.
+function onInspDateChange(){
+  const v = document.getElementById('inspDate')?.value || '';
+  if(v){ S.draft.periodFrom = v; S.draft.periodTo = v; }
   if(typeof scheduleAutoSave === 'function') scheduleAutoSave();
 }
 
@@ -2393,11 +2355,11 @@ function switchInspectionType(typeId) {
   S.draft.actionDetails  = {};
   S.draft.rectifyDetails = {};
   S.draft.formData = {};
-  // Also clear inspection-level metadata that's specific to the previous
-  // type/session (title, ref, general comments, sub-type tag). Period dates,
-  // manager and location are KEPT because the user is usually working in
+  // Title now AUTO-FILLS from the chosen inspection type (kept in step on each
+  // switch). Other session metadata (ref, general comments) is cleared. Period
+  // dates, manager and location are KEPT because the user is usually working in
   // the same workshop with the same person across types.
-  S.draft.title        = '';
+  S.draft.title        = type.name;
   S.draft.ref          = '';
   S.draft.generalNotes = '';
   S.draft.inspType     = '';
@@ -2413,14 +2375,16 @@ function switchInspectionType(typeId) {
   saveData();
   renderInspectionTypeGrid();
   renderActiveInspectionBody();
-  // Push the just-cleared draft fields back into the visible DOM inputs
-  // so the user sees an empty form straight away (without this, the old
-  // title / ref / general notes stay on screen until the next render).
-  ['inspTitle','inspRef','generalNotes'].forEach(id => {
+  // Push the refreshed draft fields back into the visible DOM inputs so the
+  // user sees them straight away: title auto-fills to the type name; ref and
+  // general notes clear.
+  ['inspRef','generalNotes'].forEach(id => {
     const el = document.getElementById(id);
     if(el) el.value = '';
   });
-  // Show period-range vs single-date row appropriately for the new type
+  const titleEl = document.getElementById('inspTitle');
+  if(titleEl) titleEl.value = type.name;
+  // Hydrate the single Date input for the new type
   applyDateRowMode();
   if(typeof updateHeaderTitle === 'function') updateHeaderTitle();
   showToast(`✓ Loaded ${type.name}`, 'info');
@@ -2859,11 +2823,9 @@ function submitInspection() {
   });
 
   S.inspections.push(insp);
-  const nextFrom=new Date(d.periodTo+'T12:00:00'); nextFrom.setDate(nextFrom.getDate()+1);
-  const span=new Date(d.periodTo)-new Date(d.periodFrom);
-  const nextTo=new Date(nextFrom.getTime()+span);
-  const iso=dt=>dt.toISOString().split('T')[0];
-  S.draft={typeId:d.typeId,results:{},notes:{},actionDetails:{},rectifyDetails:{},formData:{},periodFrom:iso(nextFrom),periodTo:iso(nextTo),manager:d.manager,location:d.location,ref:'',freq:d.freq,generalNotes:''};
+  // Single-date model: the next draft keeps the submitted date (no period
+  // auto-advance). The Date field still defaults to today for a fresh app.
+  S.draft={typeId:d.typeId,results:{},notes:{},actionDetails:{},rectifyDetails:{},formData:{},periodFrom:d.periodFrom,periodTo:d.periodTo,manager:d.manager,location:d.location,ref:'',freq:d.freq,generalNotes:'',title:d.title||'',inspType:''};
   saveData(); updateBadge(); showToast('✓ Submitted — manager will be notified');
   populateInspectionForm(); setTimeout(renderActiveInspectionBody,300);
   return insp;
@@ -3036,14 +2998,14 @@ function _convertBlobToPng(blob){
 
 function startNewDraft() {
   if(!confirm('Clear current draft?')) return;
-  const iso=d=>d.toISOString().split('T')[0]; const today=new Date();
-  const mon=new Date(today); mon.setDate(today.getDate()-(today.getDay()||7)+1);
-  const fri=new Date(mon); fri.setDate(mon.getDate()+4);
+  const iso=d=>d.toISOString().split('T')[0]; const today=iso(new Date());
   const keepTypeId = S.draft?.typeId || 'garage_inspection';
+  // Single date defaults to today; title auto-fills from the active type.
+  const keepTitle = S.inspectionTypes?.[keepTypeId]?.name || '';
   S.draft={typeId:keepTypeId,results:{},notes:{},actionDetails:{},rectifyDetails:{},formData:{},
-    periodFrom:iso(mon),periodTo:iso(fri),
+    periodFrom:today,periodTo:today,
     manager:document.getElementById('managerName').value,location:document.getElementById('workshopLoc').value,
-    ref:'',freq:'weekly',generalNotes:'',title:'',inspType:''};
+    ref:'',freq:'weekly',generalNotes:'',title:keepTitle,inspType:''};
   populateInspectionForm(); renderActiveInspectionBody(); saveData();
 }
 
@@ -3300,7 +3262,7 @@ function deleteInspection(inspId){
   const insp = S.inspections.find(i => i.id === inspId);
   if(!insp){ showToast('Inspection not found','error'); return; }
 
-  const heading = insp.title || insp.typeName || `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`;
+  const heading = insp.title || insp.typeName || fmtPeriod(insp);
   const linkedActions = S.actions.filter(a => a.inspId === inspId);
   const actionsBit = linkedActions.length
     ? `\n\nThis will also delete ${linkedActions.length} linked action${linkedActions.length!==1?'s':''}.`
@@ -3579,9 +3541,9 @@ function renderMonthlyReport(){
     // Heading: title takes priority, fallback to date range
     const cardHeading = insp.title
       ? insp.title
-      : `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`;
+      : fmtPeriod(insp);
     const cardSubHeading = insp.title
-      ? `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`
+      ? fmtPeriod(insp)
       : '';
 
     html += `<div class="card" style="border-top:3px solid ${iOverdue>0?'var(--danger)':iOpen>0?'var(--warning)':wAct>0?'var(--success)':'var(--border)'};">
@@ -4625,10 +4587,14 @@ function scheduleAutoSave(){clearTimeout(_autoTimer);_autoTimer=setTimeout(saveD
 
 function flushDraft(){
   const g=id=>document.getElementById(id)?.value||'';
-  S.draft.periodFrom=g('periodFrom'); S.draft.periodTo=g('periodTo');
+  // Single Date field maps to both period bounds (from===to). freq/inspType are
+  // retained on S.draft behind the scenes (no UI inputs) so reports/PDF/audit
+  // and the per-tenant saved state are unaffected.
+  const dt=g('inspDate');
+  if(dt){ S.draft.periodFrom=dt; S.draft.periodTo=dt; }
   S.draft.manager=g('managerName'); S.draft.location=g('workshopLoc');
-  S.draft.ref=g('inspRef'); S.draft.freq=g('inspFreq'); S.draft.generalNotes=g('generalNotes');
-  S.draft.title=g('inspTitle'); S.draft.inspType=g('inspType');
+  S.draft.ref=g('inspRef'); S.draft.generalNotes=g('generalNotes');
+  S.draft.title=g('inspTitle');
   // rectifyDetails cached live via cacheRD — no flush needed
 }
 
@@ -6716,7 +6682,7 @@ function generatePDF(inspsOverride){
     insps.forEach((insp,idx)=>{
       // Build the meta string and pre-wrap so the box auto-sizes to fit.
       const metaText = insp.title
-        ? `${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}  ·  ${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`
+        ? `${fmtPeriod(insp)}  ·  ${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`
         : `${freqLabels[insp.freq]||insp.freq}  ·  ${insp.manager}${insp.ref?'  ·  Ref: '+insp.ref:''}${insp.inspType?'  ·  '+(INSP_TYPE_LABELS[insp.inspType]||insp.inspType):''}`;
       const metaWidth = CW - 12;
 
@@ -6749,7 +6715,7 @@ function generatePDF(inspsOverride){
         doc.text(metaLines, ML+6, y + 5 + titleH + 1, {lineHeightFactor:1.25});
       } else {
         setFont('bold',9,C.primary);
-        const inspTitle=`${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}`;
+        const inspTitle=fmtPeriod(insp);
         doc.text(inspTitle, ML+6, y+5);
         setFont('normal',7,C.muted);
         doc.text(metaLines, ML+6, y+10, {lineHeightFactor:1.25});
@@ -7526,8 +7492,8 @@ function drilldown(type) {
         const rc=Object.values(results).filter(r=>r==='rectified').length;
         const a=Object.values(results).filter(r=>r==='action').length;
         html+=`<div class="drilldown-item" style="background:var(--muted-bg);border:1px solid var(--border);flex-direction:column;gap:4px;">
-          <div style="font-weight:700;font-size:14px;">${insp.title||fmtDate(insp.periodFrom)+' – '+fmtDate(insp.periodTo)}</div>
-          <div style="font-size:12px;color:var(--text-muted);">📍 ${insp.location} · 👤 ${insp.manager} · 📅 ${fmtDate(insp.periodFrom)} – ${fmtDate(insp.periodTo)}</div>
+          <div style="font-weight:700;font-size:14px;">${insp.title||fmtPeriod(insp)}</div>
+          <div style="font-size:12px;color:var(--text-muted);">📍 ${insp.location} · 👤 ${insp.manager} · 📅 ${fmtPeriod(insp)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
             <span style="font-size:11px;font-weight:700;color:var(--success);">✓ ${p} Pass</span>
             ${rc?`<span style="font-size:11px;font-weight:700;color:#065f46;">✔ ${rc} Rectified</span>`:''}
@@ -7944,6 +7910,14 @@ function fmtDate(s){
   try{return new Date(s+(s.length===10?'T12:00:00':'')).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}
   catch(e){return s;}
 }
+// Inspections now use a single date (periodFrom===periodTo). Show one date in
+// that case; fall back to a range for any legacy records that span dates.
+function fmtPeriod(insp){
+  const f=insp&&insp.periodFrom, t=insp&&insp.periodTo;
+  if(f&&t&&f===t) return fmtDate(t);
+  if(f&&t) return `${fmtDate(f)} – ${fmtDate(t)}`;
+  return fmtDate(t||f);
+}
 function resetAppData(){
   if(!confirm('⚠️ Reset all app data?\n\nThis will clear all inspections, actions, the audit record, templates and branding — returning the app to its default state.\n\nThis cannot be undone. Continue?')) return;
   try{ localStorage.removeItem('ahs:workplace-inspection:v3'); } catch(e){}
@@ -7977,8 +7951,6 @@ function resetAppData(){
     // Branding
     'brandName','brandTagline','brandWebsite','brandPhone','brandEmail'
   ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-  // Reset frequency dropdown to its default
-  const freq = document.getElementById('inspFreq'); if(freq) freq.value = 'weekly';
   // Hide the logo preview if it was shown
   const logoWrap = document.getElementById('logoPreviewWrap'); if(logoWrap) logoWrap.style.display = 'none';
   // Clear any form-style draft input values (ff- prefixed)
