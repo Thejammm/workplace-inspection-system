@@ -697,6 +697,18 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
             </select>
           </div>
           <div class="field-group">
+            <label class="field-label">Report Type</label>
+            <select id="reportTypeIdFilter" onchange="renderMonthlyReport()">
+              <option value="">All types</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Month</label>
+            <select id="reportMonthFilter" onchange="renderMonthlyReport()">
+              <option value="">All months</option>
+            </select>
+          </div>
+          <div class="field-group">
             <label class="field-label">Title / Keyword</label>
             <input type="text" id="reportTitleFilter" placeholder="Search by inspection title…" oninput="renderMonthlyReport()">
           </div>
@@ -744,6 +756,18 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
                 <option value="draft">Draft — For Review</option>
                 <option value="final" selected>Final — Issued to Client</option>
                 <option value="confidential">Confidential</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Report Type</label>
+              <select id="pdfTypeIdFilter" onchange="syncPdfFilterToBar()">
+                <option value="">All types</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Month</label>
+              <select id="pdfMonthFilter" onchange="syncPdfFilterToBar()">
+                <option value="">All months</option>
               </select>
             </div>
           </div>
@@ -3402,10 +3426,57 @@ function populateReportLocationFilter() {
     locs.map(l=>`<option value="${l}"${l===current?' selected':''}>${l}</option>`).join('');
 }
 
+// ── Report Type + Month selectors (type-filtered reports) ─────
+// The Report Type list is built from the live S.inspectionTypes registry so it
+// stays correct if a consultant adds or renames a type in the Builder. The
+// Month list is built from the months that actually hold inspections. Each
+// selector is mirrored on the filter bar and in the PDF Options panel; both
+// copies are kept in lock-step so the on-screen report and the export agree.
+function _typeOptionsHTML(current){
+  const types = Object.values(S.inspectionTypes || {})
+    .filter(t => t && t.enabled !== false)
+    .sort((a,b) => String(a.name||a.id).localeCompare(String(b.name||b.id)));
+  return '<option value="">All types</option>' +
+    types.map(t => `<option value="${t.id}"${t.id===current?' selected':''}>${(t.name||t.id)}</option>`).join('');
+}
+function _monthOptionsHTML(current){
+  const keys = [...new Set((S.inspections||[]).map(monthBucketKey).filter(k => k && k!=='unknown'))]
+    .sort().reverse();   // newest month first
+  return '<option value="">All months</option>' +
+    keys.map(k => `<option value="${k}"${k===current?' selected':''}>${_monthLongLabel(k)}</option>`).join('');
+}
+function populateReportTypeFilter(){
+  const bar = document.getElementById('reportTypeIdFilter');
+  const pdf = document.getElementById('pdfTypeIdFilter');
+  if(bar) bar.innerHTML = _typeOptionsHTML(bar.value);
+  if(pdf) pdf.innerHTML = _typeOptionsHTML(pdf.value);
+}
+function populateReportMonthFilter(){
+  const bar = document.getElementById('reportMonthFilter');
+  const pdf = document.getElementById('pdfMonthFilter');
+  if(bar) bar.innerHTML = _monthOptionsHTML(bar.value);
+  if(pdf) pdf.innerHTML = _monthOptionsHTML(pdf.value);
+}
+// PDF Options selectors write through to the filter bar so there's one source
+// of truth; the on-screen report then reflects exactly what the PDF will hold.
+function syncPdfFilterToBar(){
+  const map = [['pdfTypeIdFilter','reportTypeIdFilter'], ['pdfMonthFilter','reportMonthFilter']];
+  map.forEach(([from,to]) => {
+    const f = document.getElementById(from), t = document.getElementById(to);
+    if(f && t) t.value = f.value;
+  });
+  renderMonthlyReport();
+}
+// Long month label, e.g. '2026-06' -> 'June 2026'.
+function _monthLongLabel(mk){
+  try { return new Date(mk+'-01T12:00:00').toLocaleDateString('en-GB',{month:'long',year:'numeric'}); }
+  catch(e){ return mk; }
+}
+
 function clearReportFilters() {
   const ids = ['reportDateFrom','reportDateTo','reportTitleFilter'];
   ids.forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
-  ['reportLocationFilter','reportTypeFilter','reportStatusFilter'].forEach(id=>{
+  ['reportLocationFilter','reportTypeFilter','reportStatusFilter','reportTypeIdFilter','reportMonthFilter'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
   renderMonthlyReport();
@@ -3611,11 +3682,15 @@ function renderMonthlyReport(){
   if (!cont) return;
 
   populateReportLocationFilter();
+  populateReportTypeFilter();
+  populateReportMonthFilter();
 
   const dateFrom  = document.getElementById('reportDateFrom')?.value;
   const dateTo    = document.getElementById('reportDateTo')?.value;
   const locFilter = document.getElementById('reportLocationFilter')?.value.trim().toLowerCase();
   const typeFilter= document.getElementById('reportTypeFilter')?.value;
+  const typeIdFilter = document.getElementById('reportTypeIdFilter')?.value;
+  const monthFilter  = document.getElementById('reportMonthFilter')?.value;
   const titleKw   = document.getElementById('reportTitleFilter')?.value.trim().toLowerCase();
   const statusFilter = document.getElementById('reportStatusFilter')?.value;
 
@@ -3628,6 +3703,8 @@ function renderMonthlyReport(){
     if (dateTo   && d > new Date(dateTo+'T23:59:59'))   return false;
     if (locFilter && !(i.location||'').toLowerCase().includes(locFilter)) return false;
     if (typeFilter && (i.inspType||'') !== typeFilter) return false;
+    if (typeIdFilter && (i.typeId||'') !== typeIdFilter) return false;
+    if (monthFilter && monthBucketKey(i) !== monthFilter) return false;
     if (titleKw && !(i.title||'').toLowerCase().includes(titleKw) &&
         !(i.location||'').toLowerCase().includes(titleKw) &&
         !(i.ref||'').toLowerCase().includes(titleKw)) return false;
@@ -3645,8 +3722,8 @@ function renderMonthlyReport(){
     });
   }
 
-  const hasFilters = dateFrom||dateTo||locFilter||typeFilter||titleKw||statusFilter;
-  const activeFilterCount = [dateFrom,dateTo,locFilter,typeFilter,titleKw,statusFilter].filter(Boolean).length;
+  const hasFilters = dateFrom||dateTo||locFilter||typeFilter||typeIdFilter||monthFilter||titleKw||statusFilter;
+  const activeFilterCount = [dateFrom,dateTo,locFilter,typeFilter,typeIdFilter,monthFilter,titleKw,statusFilter].filter(Boolean).length;
 
   if (!insps.length) {
     cont.innerHTML=`<div class="empty"><div class="empty-icon">📊</div>
@@ -3679,6 +3756,8 @@ function renderMonthlyReport(){
   if (dateFrom||dateTo) filterPills.push(`📅 ${dateFrom?fmtDate(dateFrom):'any'} → ${dateTo?fmtDate(dateTo):'any'}`);
   if (locFilter)   filterPills.push(`📍 ${document.getElementById('reportLocationFilter')?.options[document.getElementById('reportLocationFilter').selectedIndex]?.text||locFilter}`);
   if (typeFilter)  filterPills.push(`🏷️ ${INSP_TYPE_LABELS[typeFilter]||typeFilter}`);
+  if (typeIdFilter)filterPills.push(`📋 ${S.inspectionTypes?.[typeIdFilter]?.name || typeIdFilter}`);
+  if (monthFilter) filterPills.push(`🗓️ ${_monthLongLabel(monthFilter)}`);
   if (titleKw)     filterPills.push(`🔍 "${titleKw}"`);
   if (statusFilter)filterPills.push(`⚡ ${statusFilter==='open'?'Open Actions':statusFilter==='overdue'?'Overdue':statusFilter==='resolved'?'Fully Resolved':statusFilter}`);
 
@@ -5808,6 +5887,16 @@ function openPdfOptions(){
   if(pcn && !pcn.value && insps[0]?.location && !looksLikeEmail(insps[0].location)){
     pcn.value = insps[0].location;
   }
+  // Mirror the filter bar's Report Type + Month into the PDF Options panel so
+  // the export defaults to exactly what's shown, then keep them populated.
+  populateReportTypeFilter();
+  populateReportMonthFilter();
+  const barType = document.getElementById('reportTypeIdFilter');
+  const pdfType = document.getElementById('pdfTypeIdFilter');
+  if(barType && pdfType) pdfType.value = barType.value;
+  const barMonth = document.getElementById('reportMonthFilter');
+  const pdfMonth = document.getElementById('pdfMonthFilter');
+  if(barMonth && pdfMonth) pdfMonth.value = barMonth.value;
   document.getElementById('pdfOptionsPanel').style.display='block';
   document.getElementById('pdfOptionsPanel').scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -5819,6 +5908,8 @@ function getFilteredInspections(){
   const dateTo    = document.getElementById('reportDateTo')?.value;
   const locFilter = document.getElementById('reportLocationFilter')?.value.trim().toLowerCase();
   const typeFilter= document.getElementById('reportTypeFilter')?.value;
+  const typeIdFilter = document.getElementById('reportTypeIdFilter')?.value;
+  const monthFilter  = document.getElementById('reportMonthFilter')?.value;
   const titleKw   = document.getElementById('reportTitleFilter')?.value.trim().toLowerCase();
   const statusFilter = document.getElementById('reportStatusFilter')?.value;
   const today = new Date(); today.setHours(0,0,0,0);
@@ -5829,6 +5920,8 @@ function getFilteredInspections(){
     if (dateTo   && d > new Date(dateTo+'T23:59:59'))   return false;
     if (locFilter && !(i.location||'').toLowerCase().includes(locFilter)) return false;
     if (typeFilter && (i.inspType||'') !== typeFilter) return false;
+    if (typeIdFilter && (i.typeId||'') !== typeIdFilter) return false;
+    if (monthFilter && monthBucketKey(i) !== monthFilter) return false;
     if (titleKw && !(i.title||'').toLowerCase().includes(titleKw) &&
         !(i.location||'').toLowerCase().includes(titleKw) &&
         !(i.ref||'').toLowerCase().includes(titleKw)) return false;
@@ -6379,10 +6472,17 @@ function generatePDF(inspsOverride){
   // are stand-alone incident records and should never be bundled into a
   // periodic aggregate. (Per-card PDF buttons still render Near Miss
   // individually because they pass an explicit inspsOverride.)
+  const selTypeId = document.getElementById('reportTypeIdFilter')?.value || '';
   let insps;
   if(Array.isArray(inspsOverride) && inspsOverride.length){
     insps = inspsOverride;
+  } else if(selTypeId){
+    // A specific report type is selected — the PDF holds only that type (and
+    // Near Miss IS included when it is the chosen type). getFilteredInspections
+    // already scopes to the selected type + month.
+    insps = getFilteredInspections();
   } else {
+    // "All types" — combined report, with Near Miss kept out of the aggregate.
     insps = getFilteredInspections().filter(i => i.typeId !== 'near_miss');
   }
   if(!insps.length){showToast('No inspections match current filters.','error');return;}
@@ -7586,11 +7686,27 @@ function generatePDF(inspsOverride){
   // Filename uses the client's brand name (from Report Branding) so the
   // PDF can be filed under the client's name on their system.
   let filename;
-  if(insps.length === 1){
-    // Single inspection → "[Inspection Title] dd-mm-yy" (+ " Rev N" same-day repeat).
+  const isPerCard = Array.isArray(inspsOverride) && inspsOverride.length === 1;
+  if(isPerCard){
+    // Per-card single PDF → "[Inspection Title] dd-mm-yy" (+ " Rev N" same-day repeat).
+    filename = buildInspectionFilename(inspsOverride[0]);
+  } else if(selTypeId){
+    // Single report TYPE across the month → "[Report Type] [Month YYYY]"
+    // (used even when only one inspection of that type matches).
+    const typeName = _sanitizeFilename(S.inspectionTypes?.[selTypeId]?.name || 'Report') || 'Report';
+    const selMonth = document.getElementById('reportMonthFilter')?.value || '';
+    const months = [...new Set(insps.map(monthBucketKey).filter(k=>k&&k!=='unknown'))].sort();
+    const monthLabel = selMonth
+      ? _monthLongLabel(selMonth)
+      : months.length === 1
+        ? _monthLongLabel(months[0])
+        : `${_monthLongLabel(months[0])} to ${_monthLongLabel(months[months.length-1])}`;
+    filename = _sanitizeFilename(`${typeName} ${monthLabel}`) + '.pdf';
+  } else if(insps.length === 1){
+    // No type filter but a single inspection matched → its own title name.
     filename = buildInspectionFilename(insps[0]);
   } else {
-    // Bulk period report (spans many inspections) keeps the client/period name.
+    // "All types" combined report keeps the distinct client/period name.
     const slug = (s) => (s||'').replace(/[^a-z0-9]/gi,'-').replace(/-+/g,'-').toLowerCase().replace(/^-|-$/g,'');
     const clientSlug = slug(brandName) || 'client';
     const dateSlug   = serverTodayISO();
@@ -8207,9 +8323,9 @@ function resetAppData(){
     // Inspection Details
     'inspTitle','inspType','periodFrom','periodTo','managerName','workshopLoc','inspRef','generalNotes',
     // Monthly Report filters
-    'reportDateFrom','reportDateTo','reportLocationFilter','reportTypeFilter','reportTitleFilter','reportStatusFilter',
+    'reportDateFrom','reportDateTo','reportLocationFilter','reportTypeFilter','reportTypeIdFilter','reportMonthFilter','reportTitleFilter','reportStatusFilter',
     // PDF options
-    'pdfClientName','pdfPreparedBy','pdfReportRef',
+    'pdfClientName','pdfPreparedBy','pdfReportRef','pdfTypeIdFilter','pdfMonthFilter',
     // Audit
     'auditDate','auditorName','auditPeriod','auditOverall','auditConsistency','auditResponse','auditTrends','auditRecs','auditSig','auditSigDate',
     // Branding
