@@ -2791,6 +2791,24 @@ function _highlightMissingItems(ids){
 function _tableHasContent(val){
   return Array.isArray(val) && val.some(r => Array.isArray(r) && r.some(c => String(c||'').trim()));
 }
+// Tally Pass/Fail scores across an inspection's table items (passfail columns),
+// so the report summary can reflect QC Outcome results.
+function _tallyTableScores(insp){
+  let pass = 0, fail = 0;
+  const secs = insp.checklistSnapshot || insp.checklist || [];
+  secs.forEach(sec => (sec.items||[]).forEach(it => {
+    if(it.input !== 'table') return;
+    const scoreCols = [];
+    (it.columns||[]).forEach((c, ci) => { if(c && typeof c === 'object' && c.type === 'passfail') scoreCols.push(ci); });
+    if(!scoreCols.length) return;
+    const rows = Array.isArray(insp.results?.[it.id]) ? insp.results[it.id] : [];
+    rows.forEach(row => scoreCols.forEach(ci => {
+      const v = row && row[ci];
+      if(v === 'pass') pass++; else if(v === 'fail') fail++;
+    }));
+  }));
+  return { pass, fail };
+}
 function _findChecklistItem(itemId){
   for(const sec of (S.checklist||[])){
     for(const it of (sec.items||[])){ if(it.id === itemId) return it; }
@@ -6851,6 +6869,9 @@ function generatePDF(inspsOverride){
   const nOpen=pActs.length-nRes;
   const today=new Date(); today.setHours(0,0,0,0);
   const nOverdue=pActs.filter(a=>!a.resolved&&a.dueDate&&new Date(a.dueDate)<today).length;
+  // QC Outcome Pass/Fail totals across the report (e.g. Garage Q/C scored rows).
+  let nQcPass=0, nQcFail=0;
+  insps.forEach(i => { const t=_tallyTableScores(i); nQcPass+=t.pass; nQcFail+=t.fail; });
 
   // Options
   const clientName   = document.getElementById('pdfClientName')?.value.trim()||insps[0]?.location||'Client';
@@ -7301,6 +7322,14 @@ function generatePDF(inspsOverride){
     {label:'Open Actions',       value:nOpen,         color:nOpen>0?C.danger:C.muted, bgColor:nOpen>0?C.dangerBg:C.mutedBg},
     {label:'Overdue',            value:nOverdue,      color:nOverdue>0?C.danger:C.muted, bgColor:nOverdue>0?C.dangerBg:C.mutedBg},
   ]);
+
+  // QC Outcome scores (Garage Q/C etc.) on their own row — only when present.
+  if(nQcPass + nQcFail > 0){
+    statBoxes([
+      {label:'QC Outcome Pass', value:nQcPass, color:C.success, bgColor:C.successBg},
+      {label:'QC Outcome Fail', value:nQcFail, color:nQcFail>0?C.danger:C.muted, bgColor:nQcFail>0?C.dangerBg:C.mutedBg},
+    ]);
+  }
 
   // Cover footer
   doc.setFillColor(...C.mutedBg);
