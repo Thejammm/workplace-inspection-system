@@ -533,6 +533,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     <button class="tab-btn active" data-tab="inspection" onclick="switchTab('inspection')">📋 Inspection</button>
     <button class="tab-btn" data-tab="actions" onclick="switchTab('actions')">⚠️ Actions <span class="tb-badge" id="badgeActions"></span></button>
     <button class="tab-btn" data-tab="monthly" onclick="switchTab('monthly')">📊 Monthly Report</button>
+    <button class="tab-btn" data-tab="archive" onclick="switchTab('archive')">🗂️ Archive</button>
     <button class="tab-btn" data-tab="audit" onclick="switchTab('audit')">🔍 H&amp;S Audit</button>
     <button class="tab-btn" data-tab="setup" onclick="switchTab('setup')">⚙️ Checklist Builder</button>
   </div>
@@ -790,6 +791,20 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     </div>
 
     <div id="monthlyContainer"></div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════
+       TAB — ARCHIVE (inspections grouped into 3-month periods)
+  ══════════════════════════════════════ -->
+  <div id="tab-archive" class="tab-panel">
+    <div class="card no-print" style="margin-bottom:20px;">
+      <div class="card-band"><h3><span class="dot">●</span> Archive</h3></div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--text-muted);margin:0;">Every submitted inspection, kept and grouped into three-month periods (calendar quarters). Open a period to browse it, view any inspection, and export its PDF. The archive is read-only — records here can't be changed or deleted.</p>
+      </div>
+    </div>
+    <div id="archiveContainer"></div>
   </div>
 
 
@@ -2018,6 +2033,7 @@ function switchTab(id) {
   if(id==='inspection'){ renderInspectionTypeGrid(); renderActiveInspectionBody(); }
   if(id==='actions')  { renderActions(); renderActionStats(); }
   if(id==='monthly')  { populateReportLocationFilter(); renderMonthlyReport(); }
+  if(id==='archive')  { renderArchive(); }
   if(id==='audit')    { renderAuditSections(); populateAuditForm(); }
   if(id==='setup')    { showSetupTab(); }
 }
@@ -3998,6 +4014,142 @@ function renderMonthlyReport(){
       :`${pActs.length} issues raised. ${nRes} resolved, ${nOpen} outstanding. Open actions require priority attention.`;
   html+=`<div style="padding:16px 20px;background:${bg};border:1.5px solid ${brd};border-radius:10px;font-size:13px;line-height:1.6;"><strong>Period Summary:</strong> ${summary}</div>`;
   cont.innerHTML=html;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ARCHIVE TAB — inspections grouped into 3-month periods
+//  ─────────────────────────────────────────────────────────────
+//  Calendar quarters (Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec). Every submitted
+//  inspection is retained and shown here read-only, newest period first, so a
+//  client can jump back to any past period, view an inspection and export its
+//  PDF. Records can't be edited or deleted from the archive.
+// ══════════════════════════════════════════════════════════════
+function _quarterKey(insp){
+  const mk = monthBucketKey(insp);                 // 'YYYY-MM'
+  if(!mk || mk === 'unknown') return 'unknown';
+  const [y, m] = mk.split('-').map(Number);
+  const q = Math.floor((m - 1) / 3) + 1;           // 1..4
+  return `${y}-Q${q}`;
+}
+function _quarterLabel(qkey){
+  if(qkey === 'unknown') return 'Undated';
+  const [y, q] = qkey.split('-Q');
+  const spans = [['Jan','Mar'],['Apr','Jun'],['Jul','Sep'],['Oct','Dec']];
+  const s = spans[Number(q) - 1] || ['?','?'];
+  return `${s[0]}–${s[1]} ${y}`;
+}
+function toggleArchivePeriod(bodyId){
+  const body = document.getElementById(bodyId);
+  if(!body) return;
+  const opening = body.style.display === 'none';
+  body.style.display = opening ? '' : 'none';
+  const caret = document.getElementById(bodyId + '-caret');
+  if(caret) caret.textContent = opening ? '▾' : '▸';
+}
+// Jump from the archive straight to this inspection in the Monthly Report,
+// scoped to its type + month so its full detail card is on screen.
+function viewInReport(inspId){
+  const insp = (S.inspections || []).find(i => i.id === inspId);
+  if(!insp) return;
+  switchTab('monthly');   // renders + populates the report selectors
+  ['reportDateFrom','reportDateTo','reportTitleFilter'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  ['reportLocationFilter','reportTypeFilter','reportStatusFilter'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  const t = document.getElementById('reportTypeIdFilter'); if(t) t.value = insp.typeId || '';
+  const m = document.getElementById('reportMonthFilter');  if(m) m.value = monthBucketKey(insp);
+  renderMonthlyReport();
+  document.getElementById('monthlyContainer')?.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// Compact read-only card for one archived inspection.
+function _archiveCardHTML(insp){
+  const isForm = insp.kind === 'form';
+  const heading = insp.title || insp.typeName || fmtPeriod(insp);
+  const typeLabel = insp.typeName || INSP_TYPE_LABELS[insp.inspType] || (isForm ? 'Form' : 'Inspection');
+  const statusBadge = insp.status === 'signed_off'
+    ? `<span class="badge badge-success">✓ Signed Off</span>`
+    : insp.awaitingReview
+      ? `<span class="badge badge-warning">⏳ Awaiting Review</span>`
+      : `<span class="badge badge-success">✓ Submitted</span>`;
+
+  // Summary pills — checklist shows pass/action/resolved counts; form shows a tag.
+  let pills = '';
+  if(!isForm){
+    const res = Object.values(insp.results || {});
+    const wPass = res.filter(r=>r==='pass').length;
+    const wAct  = res.filter(r=>r==='action').length;
+    const wRect = res.filter(r=>r==='rectified').length;
+    const acts  = S.actions.filter(a=>a.inspId===insp.id);
+    const open  = acts.filter(a=>!a.resolved).length;
+    const mk = (bg,brd,col,txt) => `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:${bg};border:1px solid ${brd};border-radius:6px;font-size:11px;font-weight:700;color:${col};">${txt}</span>`;
+    pills += mk('var(--success-bg)','var(--success-brd)','var(--success)',`✓ ${wPass} Passed`);
+    if(wRect) pills += mk('#d1fae5','#6ee7b7','#065f46',`✔ ${wRect} Rectified`);
+    if(wAct)  pills += mk('var(--warning-bg)','var(--warning-brd)','var(--warning)',`⚠ ${wAct} Action${wAct!==1?'s':''}`);
+    if(open)  pills += mk('var(--danger-bg)','var(--danger-brd)','var(--danger)',`● ${open} Open`);
+  }
+
+  return `<div class="card" style="margin-bottom:10px;border-top:3px solid ${insp.status==='signed_off'?'var(--success)':'var(--border)'};">
+    <div class="card-band">
+      <h3 style="flex:1;min-width:0;"><span class="dot">●</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${heading}</span></h3>
+      <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center;">
+        <span class="badge badge-accent">${typeLabel}</span>
+        ${statusBadge}
+        <button class="no-print" onclick="viewInReport('${insp.id}')" title="Open this inspection in the Monthly Report"
+          style="background:transparent;border:1px solid var(--border);color:var(--text);height:26px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">↗ View</button>
+        <button class="no-print" onclick="generateSingleInspectionPDF('${insp.id}')" title="Export this inspection as a PDF"
+          style="background:var(--accent);color:#fff;border:1px solid var(--accent);height:26px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">📄 PDF</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;${pills?'padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;':''}">
+        <span style="font-size:13px;color:var(--text-muted);">📅 ${fmtDate(insp.periodTo)}</span>
+        <span style="font-size:13px;color:var(--text-muted);">📍 ${insp.location||'—'}</span>
+        <span style="font-size:13px;color:var(--text-muted);">👤 ${insp.manager||'—'}</span>
+        ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${insp.ref}</span>`:''}
+      </div>
+      ${pills?`<div style="display:flex;gap:6px;flex-wrap:wrap;">${pills}</div>`:''}
+      ${insp.generalNotes?`<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-top:${pills?'12px':'0'};">"${insp.generalNotes}"</div>`:''}
+    </div>
+  </div>`;
+}
+
+function renderArchive(){
+  const cont = document.getElementById('archiveContainer');
+  if(!cont) return;
+  const insps = (S.inspections || []).slice();
+  if(!insps.length){
+    cont.innerHTML = `<div class="empty"><div class="empty-icon">🗂️</div>
+      <h4>Nothing archived yet</h4>
+      <p>Submitted inspections appear here, grouped into three-month periods.</p></div>`;
+    return;
+  }
+
+  // Group by calendar quarter, newest period first.
+  const groups = {};
+  insps.forEach(i => { const k = _quarterKey(i); (groups[k] = groups[k] || []).push(i); });
+  const keys = Object.keys(groups).sort().reverse();
+
+  let html = '';
+  keys.forEach((k, idx) => {
+    const list = groups[k].slice().sort((a,b) =>
+      String(b.submittedAt||b.periodTo||'').localeCompare(String(a.submittedAt||a.periodTo||'')));
+    const signed = list.filter(i => i.status === 'signed_off').length;
+    const open = idx === 0;                 // newest period expanded by default
+    const bodyId = `arch-${k}`;
+    html += `<div class="card no-print" style="margin-bottom:14px;">
+      <div class="card-band" style="cursor:pointer;" onclick="toggleArchivePeriod('${bodyId}')">
+        <h3 style="flex:1;"><span id="${bodyId}-caret" style="display:inline-block;width:14px;">${open?'▾':'▸'}</span> ${_quarterLabel(k)}</h3>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span class="badge badge-accent">${list.length} inspection${list.length!==1?'s':''}</span>
+          ${signed?`<span class="badge badge-success">${signed} signed off</span>`:''}
+        </div>
+      </div>
+      <div class="card-body" id="${bodyId}" style="${open?'':'display:none;'}">
+        ${list.map(_archiveCardHTML).join('')}
+      </div>
+    </div>`;
+  });
+  cont.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════════════════
