@@ -3423,6 +3423,8 @@ function renderActions() {
             ${a.resolved?`<span style="color:var(--success)">✓ ${fmtDate(a.resolvedAt?.slice(0,10))} · ${a.resolvedBy}</span>`:''}
           </div>
         </div>
+        <button class="no-print" onclick="deleteAction('${a.id}')" title="Remove this action item"
+          style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:28px;height:28px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0;align-self:flex-start;">✕</button>
       </div>
       <div style="font-size:13px;margin-bottom:${a.assignedTo?'6px':'0'};"><strong>Issue:</strong> ${a.issue}</div>
       ${a.assignedTo?`<div style="font-size:13px;color:var(--text-muted);"><strong>Assigned:</strong> ${a.assignedTo}</div>`:''}
@@ -3463,6 +3465,20 @@ function renderActions() {
         </div>`}`;
     cont.appendChild(div);
   });
+}
+
+// Remove an action item outright (for a stray/mistaken one). The inspection it
+// came from is left untouched — this just deletes the tracked action.
+function deleteAction(id){
+  if(_blockIfReadOnly()) return;
+  const a = S.actions.find(x => x.id === id);
+  if(!a) return;
+  if(!confirm(`Remove this action?\n\n"${a.itemName}"\n\nThis deletes the action item itself; the inspection it came from is not changed. This cannot be undone.`)) return;
+  S.actions = S.actions.filter(x => x.id !== id);
+  saveData(); updateBadge();
+  renderActions(); renderActionStats();
+  if(typeof renderMonthlyReport === 'function'){ try { renderMonthlyReport(); } catch(e){} }
+  showToast('Action removed','success');
 }
 
 function resolveAction(id){
@@ -5203,14 +5219,26 @@ function saveData(){
     const el=document.getElementById('saveIndicator');
     if(el) el.textContent='Saved '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
   }catch(e){if(!_quotaWarn){_quotaWarn=true;showToast('Local storage full','error');}}
-  // If signed in, ALSO sync to server (best-effort, async)
+  // If signed in, ALSO sync to server (best-effort, async). A failed server
+  // save used to be silent — which made changes appear to "come back" after a
+  // refresh (the server still held the old data). Surface it now.
   if(Auth.isSignedIn() && Auth.activeTenantId()){
     Auth.saveToServer(S).then(ok => {
       const el=document.getElementById('saveIndicator');
-      if(el && ok) el.textContent='Saved to server '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+      if(ok){
+        if(el){ el.textContent='Saved to server '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); el.style.color=''; }
+        _serverSaveWarned = false;
+      } else {
+        if(el){ el.textContent='⚠ Not saved to server — changes are on this device only'; el.style.color='var(--danger)'; }
+        if(!_serverSaveWarned){
+          _serverSaveWarned = true;
+          showToast('⚠ Could not save to the server — your changes are on this device only and may revert on refresh.','error');
+        }
+      }
     });
   }
 }
+let _serverSaveWarned = false;
 
 function loadData(){
   try{
