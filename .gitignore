@@ -15,6 +15,10 @@ Thumbs.db
 # Backups & local working files
 *.backup-*
 *.bak
+_backups/
+
+# Local preview / editor config (not part of the app)
+.claude/
 
 # Logs
 npm-debug.log*

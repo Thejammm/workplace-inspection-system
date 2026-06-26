@@ -129,6 +129,9 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 
 /* Checklist items */
 .ci-wrap{border-bottom:1px solid var(--border);}
+/* Highlight for required items left unanswered on submit (Amendment 4). */
+.ci-wrap.ci-missing{outline:2px solid var(--danger);outline-offset:-2px;border-radius:8px;background:var(--danger-bg);}
+.form-field-wrap.ff-missing{outline:2px solid var(--danger);outline-offset:2px;border-radius:8px;}
 .ci-wrap:last-child{border-bottom:none;}
 .ci-row{display:flex;align-items:flex-start;gap:10px;padding:14px 0;}
 .ci-main{flex:1;min-width:0;}
@@ -598,6 +601,11 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
         <div class="field-grid" style="margin-bottom:14px;">
           <div class="field-group"><label class="field-label">Date</label><input type="date" id="inspDate" oninput="onInspDateChange()"></div>
           <div class="field-group"><label class="field-label">Completed By</label><input type="text" id="managerName" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Full name" oninput="scheduleAutoSave()"></div>
+        </div>
+        <!-- Shown only when the server clock could not be reached (offline). The
+             date/time is then taken from this device rather than the server. -->
+        <div id="deviceTimeNotice" style="display:none;margin-bottom:14px;padding:8px 12px;background:var(--warning-bg);border:1px solid var(--warning-brd);border-radius:6px;font-size:12px;color:var(--warning);">
+          ⓘ Date and time are recorded from the device being used.
         </div>
         <!-- Row 2: Location full width -->
         <div class="field-grid cols-1" style="margin-bottom:14px;">
@@ -1827,6 +1835,10 @@ let _activeScenario = null;
 document.addEventListener('DOMContentLoaded', async () => {
   // Local boot: always load from localStorage first so the UI renders fast
   loadData();
+  // Pull the server clock before stamping any default dates, so the date field
+  // reflects real (server) time rather than this device's clock. Best-effort —
+  // when offline it silently falls back to the device clock + shows the notice.
+  await syncServerTime();
   // Push brand colours into CSS variables BEFORE the first render so cards,
   // buttons, badges and tabs start out in the user's brand.
   applyBrandingToCSS();
@@ -1863,13 +1875,59 @@ document.addEventListener('DOMContentLoaded', async () => {
   // PDF save folder picker has been removed — downloads go straight to the
   // browser's Downloads folder now. restorePersistedSaveFolder() is no longer called.
   setInterval(saveData, 30000);
+  // Keep the server-clock offset fresh on long-open sessions so stamps don't drift.
+  setInterval(syncServerTime, 5 * 60 * 1000);
 });
 // Ctrl+S shortcut removed — saveAs() would let users download the whole app HTML with embedded data.
 // document.addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveAs();} });
 
+// ══════════════════════════════════════════════════════════════
+//  SERVER CLOCK
+//  ─────────────────────────────────────────────────────────────
+//  Every inspection date/time is sourced from the server clock, not the
+//  device clock, so records read correctly regardless of a device's local
+//  time being wrong. We fetch /api/time once on load, store the offset
+//  between server and device, and derive all "now" values from it. When the
+//  server can't be reached (offline use), we fall back to the device clock
+//  and surface the on-screen notice.
+// ══════════════════════════════════════════════════════════════
+let _serverClockOffset = 0;     // serverNow - deviceNow, in ms
+let _serverTimeSynced  = false; // true once /api/time has answered
+
+// Authoritative "now": device clock corrected by the server offset.
+function serverNow(){ return new Date(Date.now() + _serverClockOffset); }
+// Server "today" as YYYY-MM-DD (local Europe/London calendar day).
+function serverTodayISO(){
+  // en-CA gives YYYY-MM-DD; Europe/London keeps GMT/BST correct.
+  return serverNow().toLocaleDateString('en-CA', { timeZone:'Europe/London' });
+}
+
+async function syncServerTime(){
+  try {
+    const r = await fetch('/api/time', { cache:'no-store' });
+    if(!r.ok) throw new Error('bad status');
+    const j = await r.json();
+    const srv = new Date(j.now).getTime();
+    if(!isFinite(srv)) throw new Error('bad time');
+    _serverClockOffset = srv - Date.now();
+    _serverTimeSynced  = true;
+  } catch(e){
+    // Offline / server unreachable — keep device clock as the source.
+    _serverTimeSynced = false;
+  }
+  updateDeviceTimeNotice();
+  return _serverTimeSynced;
+}
+
+// Show the "recorded from the device" notice only when server time is unavailable.
+function updateDeviceTimeNotice(){
+  const el = document.getElementById('deviceTimeNotice');
+  if(el) el.style.display = _serverTimeSynced ? 'none' : 'block';
+}
+
 function setDefaultDates() {
-  const today = new Date();
-  const iso = d=>d.toISOString().split('T')[0];
+  const today = serverNow();
+  const iso = d=>serverTodayISO();
   if (!S.draft.periodFrom) {
     // Inspection date defaults to today (single date; stored as from===to)
     S.draft.periodFrom = iso(today); S.draft.periodTo = iso(today);
@@ -2144,6 +2202,10 @@ function renderFormPhotoThumbs(photos, fieldId){
 function updateFormField(fieldId, value){
   if(!S.draft.formData) S.draft.formData = {};
   S.draft.formData[fieldId] = value;
+  // Field now has a value — clear any "missing" highlight from a failed submit.
+  if(value !== undefined && value !== null && String(value).trim() !== ''){
+    document.getElementById('ffw-'+fieldId)?.classList.remove('ff-missing');
+  }
   // Re-evaluate visibility for any fields whose showIf references this field
   _refreshFormVisibility(fieldId);
   scheduleAutoSave();
@@ -2617,11 +2679,30 @@ function renderChecklist() {
   });
 }
 
+// ── Validation highlighting (Amendment 4) ─────────────────────
+// On a failed submit we mark every unanswered checklist item and jump focus
+// to the first, rather than only flashing a message at the top of the screen.
+function _clearMissingHighlights(){
+  document.querySelectorAll('.ci-wrap.ci-missing').forEach(el => el.classList.remove('ci-missing'));
+}
+function _highlightMissingItems(ids){
+  _clearMissingHighlights();
+  ids.forEach(id => { const el = document.getElementById('ciw-'+id); if(el) el.classList.add('ci-missing'); });
+  const first = document.getElementById('ciw-'+ids[0]);
+  if(first){
+    first.scrollIntoView({ behavior:'smooth', block:'center' });
+    const ctl = first.querySelector('select, textarea, input, button');
+    if(ctl){ try { ctl.focus({ preventScroll:true }); } catch(e){ ctl.focus(); } }
+  }
+}
+
 function setStatus(itemId, status) {
   if(!S.draft.results) S.draft.results={};
   S.draft.results[itemId]=status;
   const wrap = document.getElementById('ciw-'+itemId);
   if(wrap) {
+    // Item now has a value — clear any "missing" highlight from a failed submit.
+    if(status!==undefined && status!==null && status!=='') wrap.classList.remove('ci-missing');
     const btns = wrap.querySelectorAll('.stt-btn');
     btns.forEach(b=>b.classList.remove('stt-pass','stt-rectified','stt-action','stt-na'));
     if(status==='pass')      btns[0]?.classList.add('stt-pass');
@@ -2745,7 +2826,7 @@ function submitInspection() {
   // structured fields capture whatever real info matters. Multi-tenant work
   // (next session) will pull the real user/tenant identity from the login.
   if(activeType?.kind === 'form'){
-    const today = new Date().toISOString().split('T')[0];
+    const today = serverTodayISO();
     if(!d.periodFrom) d.periodFrom = today;
     if(!d.periodTo)   d.periodTo   = today;
     // Defaults pulled from the brand name only — never from anything that
@@ -2777,18 +2858,21 @@ function submitInspection() {
       const firstLabel = (first.label||first.id).replace(/^\s*\d+(\.\d+)*\s*[—-]\s*/, '');
       const msg = missingFields.length === 1
         ? `Missing: "${firstLabel}"`
-        : `${missingFields.length} required fields still need a value (first: "${firstLabel}")`;
+        : `${missingFields.length} required fields still need a value — jumped to the first one.`;
       showToast(msg, 'error');
+      // Highlight EVERY missing field, then jump focus to the first (Amendment 4).
+      document.querySelectorAll('.form-field-wrap.ff-missing').forEach(el => el.classList.remove('ff-missing'));
+      missingFields.forEach(f => { document.getElementById('ffw-'+f.id)?.classList.add('ff-missing'); });
       const el = document.getElementById('ffw-'+first.id);
-      if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
-      // Briefly highlight the missing field for clarity
       if(el){
-        const orig = el.style.boxShadow;
-        el.style.boxShadow = '0 0 0 3px var(--danger)';
-        setTimeout(()=>{ el.style.boxShadow = orig; }, 1800);
+        el.scrollIntoView({behavior:'smooth', block:'center'});
+        const ctl = el.querySelector('input, select, textarea, button');
+        if(ctl){ try { ctl.focus({preventScroll:true}); } catch(e){ ctl.focus(); } }
       }
       return null;
     }
+    // All required fields answered — clear any leftover highlights.
+    document.querySelectorAll('.form-field-wrap.ff-missing').forEach(el => el.classList.remove('ff-missing'));
 
     const insp = {
       id:'insp_'+Date.now(),
@@ -2802,7 +2886,7 @@ function submitInspection() {
       inspType:d.inspType||'',
       formData:JSON.parse(JSON.stringify(data)),
       formSnapshot:JSON.parse(JSON.stringify(form)),
-      submittedAt:new Date().toISOString(),
+      submittedAt:serverNow().toISOString(),
       // ── Lifecycle ──
       status:'open',          // 'open' until manager signs off; then 'signed_off'
       awaitingReview:true,    // set true on submit; set false when manager has reviewed
@@ -2830,11 +2914,19 @@ function submitInspection() {
   const missing=[];
   S.checklist.forEach(s=>s.items.forEach(i=>{
     const v = d.results[i.id];
-    if(v === undefined || v === null || v === '') missing.push(i.name);
-    else if(Array.isArray(v) && v.length === 0) missing.push(i.name);
-    else if(typeof v === 'string' && v.trim() === '') missing.push(i.name);
+    const empty = (v === undefined || v === null || v === '') ||
+                  (Array.isArray(v) && v.length === 0) ||
+                  (typeof v === 'string' && v.trim() === '');
+    if(empty) missing.push(i.id);
   }));
-  if(missing.length){ showToast(`${missing.length} item${missing.length>1?'s':''} still need a status.`,'error'); return null; }
+  if(missing.length){
+    // Mark every empty item and jump to the first one (Amendment 4).
+    _highlightMissingItems(missing);
+    showToast(`${missing.length} item${missing.length>1?'s':''} still need a status — jumped to the first one.`,'error');
+    return null;
+  }
+  // All answered — clear any leftover highlights from a previous failed submit.
+  _clearMissingHighlights();
 
   const insp={
     id:'insp_'+Date.now(),
@@ -2847,7 +2939,7 @@ function submitInspection() {
     results:{...d.results}, notes:{...d.notes},
     actionDetails:{...d.actionDetails}, rectifyDetails:{...(d.rectifyDetails||{})},
     checklistSnapshot:JSON.parse(JSON.stringify(S.checklist)),
-    submittedAt:new Date().toISOString(),
+    submittedAt:serverNow().toISOString(),
     // ── Lifecycle ──
     status:'open',          // 'open' until manager signs off; then 'signed_off'
     awaitingReview:true,    // set true on submit; cleared by manager
@@ -3051,7 +3143,7 @@ function _convertBlobToPng(blob){
 function startNewDraft() {
   if(_blockIfReadOnly()) return;
   if(!confirm('Clear current draft?')) return;
-  const iso=d=>d.toISOString().split('T')[0]; const today=iso(new Date());
+  const today = serverTodayISO();
   const keepTypeId = S.draft?.typeId || 'garage_inspection';
   // Single date defaults to today; title auto-fills from the active type.
   const keepTitle = S.inspectionTypes?.[keepTypeId]?.name || '';
@@ -3225,6 +3317,10 @@ function signOffInspection(inspId){
   if(_blockIfReadOnly()) return;
   const insp = S.inspections.find(i => i.id === inspId);
   if(!insp){ showToast('Inspection not found','error'); return; }
+  if(!_activeMonthKeys().includes(monthBucketKey(insp))){
+    showToast('This month is archived (read-only) — sign-off is no longer available.','info');
+    return;
+  }
   if(insp.status === 'signed_off'){
     showToast('Already signed off','info');
     return;
@@ -3244,7 +3340,7 @@ function signOffInspection(inspId){
   insp.status = 'signed_off';
   insp.awaitingReview = false;
   insp.signedOffBy = signedOffBy.trim();
-  insp.signedOffAt = new Date().toISOString();
+  insp.signedOffAt = serverNow().toISOString();
   saveData();
   showToast('✓ Inspection signed off — ready for PDF / handover');
   renderMonthlyReport();
@@ -3254,6 +3350,10 @@ function signOffInspection(inspId){
 function reopenInspection(inspId){
   const insp = S.inspections.find(i => i.id === inspId);
   if(!insp) return;
+  if(!_activeMonthKeys().includes(monthBucketKey(insp))){
+    showToast('This month is archived (read-only) — re-opening is no longer available.','info');
+    return;
+  }
   if(!confirm(`Re-open this inspection? This removes the sign-off so it can be amended again.\n\n(Useful if the manager spots something after signing off.)`)) return;
   insp.status = 'open';
   insp.awaitingReview = true;
@@ -3311,29 +3411,13 @@ function clearReportFilters() {
   renderMonthlyReport();
 }
 
-// Delete an inspection (and any actions associated with it) after confirmation.
-// Triggered from the red ✕ button on each Monthly Report card.
+// Amendment 2: submitted inspections are retained and locked. Every record in
+// the Monthly Report has been submitted, so deletion is no longer offered (the
+// ✕ controls were removed). This guard stays as a defensive backstop in case
+// the function is reached by any other path. Drafts are discarded separately
+// via "Clear current draft" (startNewDraft), which never touches saved records.
 function deleteInspection(inspId){
-  const insp = S.inspections.find(i => i.id === inspId);
-  if(!insp){ showToast('Inspection not found','error'); return; }
-
-  const heading = insp.title || insp.typeName || fmtPeriod(insp);
-  const linkedActions = S.actions.filter(a => a.inspId === inspId);
-  const actionsBit = linkedActions.length
-    ? `\n\nThis will also delete ${linkedActions.length} linked action${linkedActions.length!==1?'s':''}.`
-    : '';
-
-  if(!confirm(`Delete this inspection?\n\n"${heading}"${actionsBit}\n\nThis cannot be undone.`)) return;
-
-  S.inspections = S.inspections.filter(i => i.id !== inspId);
-  S.actions     = S.actions.filter(a => a.inspId !== inspId);
-
-  saveData();
-  renderMonthlyReport();
-  // Also refresh anything that might show counts/lists for inspections
-  if(typeof renderActions === 'function')   try { renderActions(); }   catch(e){}
-  if(typeof renderDashboard === 'function') try { renderDashboard(); } catch(e){}
-  showToast('Inspection deleted','success');
+  showToast('Submitted inspections are retained and cannot be deleted.','info');
 }
 
 // Generate a PDF for a single inspection (from the per-card "📄 PDF" button
@@ -3354,8 +3438,83 @@ function generateSingleInspectionPDF(inspId){
   }
 }
 
+// ── Month grouping / archive (Amendment 2) ────────────────────
+// Inspections are grouped by the month they were created. The current month
+// plus the previous two are "live"; older months are archived (read-only).
+// Records are retained either way — nothing completed is deletable.
+function monthBucketKey(insp){
+  const s = (insp.submittedAt || insp.periodTo || '');
+  return s ? s.slice(0,7) : 'unknown';   // 'YYYY-MM'
+}
+// The three live month keys: current, current-1, current-2 (server clock).
+function _activeMonthKeys(){
+  const now = serverNow();
+  const keys = [];
+  for(let i=0;i<3;i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    keys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }
+  return keys;
+}
+function _monthHeaderHTML(mk, count, archived){
+  let label = mk;
+  try { label = new Date(mk+'-01T12:00:00').toLocaleDateString('en-GB',{month:'long',year:'numeric'}); } catch(e){}
+  const badge = archived
+    ? `<span class="badge" style="background:var(--muted-bg);color:var(--text-muted);border:1px solid var(--border);">🔒 Archived — read-only</span>`
+    : `<span class="badge badge-success">Live</span>`;
+  return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:22px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--border);">
+      <h3 style="font-size:15px;font-weight:800;color:var(--text);margin:0;">${label}</h3>
+      <span class="badge badge-accent">${count} inspection${count!==1?'s':''}</span>
+      ${badge}
+    </div>`;
+}
+
+// ── Shared sign-off panel ─────────────────────────────────────
+// Used by BOTH the checklist and form report cards so every inspection type
+// (workshop checklists, near-miss, tardiness, induction, return-to-work,
+// delivery-driver, etc.) exposes the manager sign-off control. Forms have no
+// linked actions, so they're ready for sign-off as soon as they're submitted.
+function _signOffPanelHTML(insp, archived){
+  const wActions = S.actions.filter(a => a.inspId === insp.id);
+  const isSignedOff = insp.status === 'signed_off';
+  const allActionsResolved = wActions.length === 0 || wActions.every(a => a.resolved);
+
+  if(isSignedOff){
+    // Archived months are read-only — keep the signed-off summary but drop Re-open.
+    const reopen = archived ? '' :
+      `<button class="btn btn-ghost btn-xs" onclick="reopenInspection('${insp.id}')" title="Re-open this inspection if something needs changing">↺ Re-open</button>`;
+    return `<div class="no-print" style="margin-top:14px;padding:14px 16px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:24px;line-height:1;">✓</div>
+        <div style="flex:1;min-width:200px;">
+          <div style="font-size:13px;font-weight:700;color:var(--success);">Inspection signed off — complete</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Signed off by ${insp.signedOffBy || 'manager'} on ${insp.signedOffAt ? fmtDate(insp.signedOffAt.slice(0,10)) : ''}</div>
+        </div>
+        ${reopen}
+      </div>`;
+  } else if(archived){
+    // Older month, never signed off — locked for the record. No controls.
+    return `<div class="no-print" style="margin-top:14px;padding:12px 14px;background:var(--muted-bg);border:1.5px dashed var(--border);border-radius:9px;font-size:12px;color:var(--text-muted);">
+        🔒 <strong>Archived month — read-only.</strong> This inspection was not signed off and is retained as-is.
+      </div>`;
+  } else if(allActionsResolved){
+    return `<div class="no-print" style="margin-top:14px;padding:14px 16px;background:var(--accent-light);border:1.5px solid var(--accent);border-radius:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:24px;line-height:1;">📋</div>
+        <div style="flex:1;min-width:200px;">
+          <div style="font-size:13px;font-weight:700;color:var(--accent-dark);">${wActions.length === 0 ? 'No issues raised — ready for sign-off' : 'All actions resolved — ready for sign-off'}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Manager review required. Once signed off, this inspection is locked.</div>
+        </div>
+        <button class="btn btn-success btn-sm" onclick="signOffInspection('${insp.id}')">✓ Sign Off — Complete</button>
+      </div>`;
+  } else {
+    const remaining = wActions.filter(a => !a.resolved).length;
+    return `<div class="no-print" style="margin-top:14px;padding:12px 14px;background:var(--muted-bg);border:1.5px dashed var(--border);border-radius:9px;font-size:12px;color:var(--text-muted);">
+        ⏳ <strong>${remaining} action${remaining!==1?'s':''} still unresolved.</strong> Sign-off available once every action is rectified and the manager has reviewed them.
+      </div>`;
+  }
+}
+
 // Render a Monthly Report card for a form-style inspection submission
-function _renderFormReportCard(insp){
+function _renderFormReportCard(insp, archived){
   const form = insp.formSnapshot;
   const data = insp.formData || {};
   const heading = insp.title || insp.typeName || 'Form Submission';
@@ -3370,15 +3529,15 @@ function _renderFormReportCard(insp){
       </h3>
       <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;align-items:center;">
         <span class="badge badge-accent">${insp.typeName||'Form'}</span>
-        <span class="badge badge-success">✓ Submitted</span>
+        ${insp.status === 'signed_off'
+          ? `<span class="badge badge-success">✓ Signed Off</span>`
+          : insp.awaitingReview
+            ? `<span class="badge badge-warning">⏳ Awaiting Review</span>`
+            : `<span class="badge badge-success">✓ Submitted</span>`}
         <button class="no-print" onclick="generateSingleInspectionPDF('${insp.id}')" title="Generate PDF for this submission"
           style="background:var(--accent);color:#fff;border:1px solid var(--accent);height:26px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;line-height:1;"
           onmouseover="this.style.background='var(--accent-dark, var(--accent))';this.style.opacity='0.9';"
           onmouseout="this.style.background='var(--accent)';this.style.opacity='1';">📄 PDF</button>
-        <button class="no-print" onclick="deleteInspection('${insp.id}')" title="Delete this submission"
-          style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:26px;height:26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;padding:0;"
-          onmouseover="this.style.background='var(--danger)';this.style.color='#fff';"
-          onmouseout="this.style.background='transparent';this.style.color='var(--danger)';">✕</button>
       </div>
     </div>
     <div class="card-body">
@@ -3439,6 +3598,9 @@ function _renderFormReportCard(insp){
   if(insp.generalNotes){
     html += `<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-top:8px;">"${insp.generalNotes}"</div>`;
   }
+
+  // Manager sign-off — same control as checklist inspections.
+  html += _signOffPanelHTML(insp, archived);
 
   html += `</div></div>`;
   return html;
@@ -3558,11 +3720,25 @@ function renderMonthlyReport(){
       </div>
     </div>`;
 
-  // ── One card per inspection ───────────────────────────────────
-  insps.forEach(insp => {
+  // ── Cards, grouped by month (Amendment 2) ─────────────────────
+  // Newest month first. The current month + previous two are live; older
+  // months are archived (read-only). Records are retained either way.
+  const _activeKeys = _activeMonthKeys();
+  const _grouped = insps.slice().sort((a,b) =>
+    String(monthBucketKey(b) + (b.submittedAt||b.periodTo||''))
+      .localeCompare(String(monthBucketKey(a) + (a.submittedAt||a.periodTo||''))));
+  let _curMonthKey = null;
+  _grouped.forEach(insp => {
+    const _mk = monthBucketKey(insp);
+    const archived = !_activeKeys.includes(_mk);
+    if(_mk !== _curMonthKey){
+      _curMonthKey = _mk;
+      const _monthCount = _grouped.filter(i => monthBucketKey(i) === _mk).length;
+      html += _monthHeaderHTML(_mk, _monthCount, archived);
+    }
     // Form-style submissions get their own card layout
     if(insp.kind === 'form'){
-      html += _renderFormReportCard(insp);
+      html += _renderFormReportCard(insp, archived);
       return;
     }
     const wPass   = Object.values(insp.results||{}).filter(r=>r==='pass').length;
@@ -3614,10 +3790,6 @@ function renderMonthlyReport(){
             style="background:var(--accent);color:#fff;border:1px solid var(--accent);height:26px;padding:0 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;line-height:1;"
             onmouseover="this.style.background='var(--accent-dark, var(--accent))';this.style.opacity='0.9';"
             onmouseout="this.style.background='var(--accent)';this.style.opacity='1';">📄 PDF</button>
-          <button class="no-print" onclick="deleteInspection('${insp.id}')" title="Delete this inspection"
-            style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:26px;height:26px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;padding:0;"
-            onmouseover="this.style.background='var(--danger)';this.style.color='#fff';"
-            onmouseout="this.style.background='transparent';this.style.color='var(--danger)';">✕</button>
         </div>
       </div>
       <div class="card-body">
@@ -3731,34 +3903,8 @@ function renderMonthlyReport(){
     // ── Sign-off panel ──────────────────────────────────────────
     // The inspection isn't fully complete until every action raised has been
     // resolved AND the manager has signed it off. Until sign-off, the PDF
-    // is essentially provisional. This is the gate.
-    const isSignedOff = insp.status === 'signed_off';
-    const allActionsResolved = wActions.length === 0 || wActions.every(a => a.resolved);
-
-    if(isSignedOff){
-      html += `<div class="no-print" style="margin-top:14px;padding:14px 16px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <div style="font-size:24px;line-height:1;">✓</div>
-        <div style="flex:1;min-width:200px;">
-          <div style="font-size:13px;font-weight:700;color:var(--success);">Inspection signed off — complete</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Signed off by ${insp.signedOffBy || 'manager'} on ${insp.signedOffAt ? fmtDate(insp.signedOffAt.slice(0,10)) : ''}</div>
-        </div>
-        <button class="btn btn-ghost btn-xs" onclick="reopenInspection('${insp.id}')" title="Re-open this inspection if something needs changing">↺ Re-open</button>
-      </div>`;
-    } else if(allActionsResolved){
-      html += `<div class="no-print" style="margin-top:14px;padding:14px 16px;background:var(--accent-light);border:1.5px solid var(--accent);border-radius:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <div style="font-size:24px;line-height:1;">📋</div>
-        <div style="flex:1;min-width:200px;">
-          <div style="font-size:13px;font-weight:700;color:var(--accent-dark);">${wActions.length === 0 ? 'No issues raised — ready for sign-off' : 'All actions resolved — ready for sign-off'}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Manager review required. Once signed off, this inspection is locked.</div>
-        </div>
-        <button class="btn btn-success btn-sm" onclick="signOffInspection('${insp.id}')">✓ Sign Off — Complete</button>
-      </div>`;
-    } else {
-      const remaining = wActions.filter(a => !a.resolved).length;
-      html += `<div class="no-print" style="margin-top:14px;padding:12px 14px;background:var(--muted-bg);border:1.5px dashed var(--border);border-radius:9px;font-size:12px;color:var(--text-muted);">
-        ⏳ <strong>${remaining} action${remaining!==1?'s':''} still unresolved.</strong> Sign-off available once every action is rectified and the manager has reviewed them.
-      </div>`;
-    }
+    // is essentially provisional. This is the gate. (Shared with form cards.)
+    html += _signOffPanelHTML(insp, archived);
 
     html+=`</div></div>`; // close card-body + card
   });
@@ -5708,6 +5854,50 @@ function getFilteredInspections(){
 //  Triggered by the "📄 Submit & Save PDF" button on the
 //  Inspection tab — designed for immediate filing.
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+//  PDF FILENAME (Amendments 5 & 6)
+//  ─────────────────────────────────────────────────────────────
+//  Saved file is named "[Inspection Title] dd-mm-yy". Hyphens are used in the
+//  filename because a filename can't contain forward slashes (the document
+//  itself still shows the readable date). Filename-illegal characters are
+//  stripped from the title. If another inspection shares the same title AND
+//  date, a revision suffix (" Rev 2", " Rev 3", …) is appended so a repeated
+//  inspection on the same day never overwrites the first file.
+// ══════════════════════════════════════════════════════════════
+function _sanitizeFilename(s){
+  return String(s == null ? '' : s)
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '')  // characters not valid in a filename
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function _dmyHyphen(iso){
+  // 'YYYY-MM-DD' -> 'dd-mm-yy'. Falls back to server today if missing/malformed.
+  const s = (iso || serverTodayISO()).slice(0,10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  return m ? `${m[3]}-${m[2]}-${m[1].slice(2)}` : s.replace(/[^0-9]+/g,'-');
+}
+function _inspTitleFor(insp){
+  return _sanitizeFilename(insp.title || insp.typeName || 'Inspection') || 'Inspection';
+}
+function _inspDateKey(insp){
+  return (insp.periodTo || (insp.submittedAt||'').slice(0,10) || '').slice(0,10);
+}
+// Position of this inspection among others sharing its title+date (oldest = 1).
+function _revisionFor(insp){
+  const titleKey = _inspTitleFor(insp).toLowerCase();
+  const dateKey  = _inspDateKey(insp);
+  const peers = (S.inspections||[])
+    .filter(i => _inspTitleFor(i).toLowerCase() === titleKey && _inspDateKey(i) === dateKey)
+    .sort((a,b) => String(a.submittedAt||'').localeCompare(String(b.submittedAt||'')));
+  const idx = peers.findIndex(i => i.id === insp.id);
+  return idx <= 0 ? 1 : idx + 1;
+}
+function buildInspectionFilename(insp){
+  const base = `${_inspTitleFor(insp)} ${_dmyHyphen(_inspDateKey(insp))}`;
+  const rev = _revisionFor(insp);
+  return `${rev > 1 ? `${base} Rev ${rev}` : base}.pdf`;
+}
+
 function generateSingleFormPDF(insp){
   if(!insp || insp.kind !== 'form' || !insp.formSnapshot){
     showToast('No form submission to export.','error');
@@ -6168,13 +6358,8 @@ function generateSingleFormPDF(insp){
   addFooter();
 
   // ── Save ──
-  // Filename uses the client's brand name (from Report Branding) so the
-  // PDF can be filed under the client's name on their system.
-  const dateSlug = new Date(insp.submittedAt||Date.now()).toISOString().slice(0,10);
-  const slug = (s) => (s||'').replace(/[^a-z0-9]/gi,'-').replace(/-+/g,'-').toLowerCase().replace(/^-|-$/g,'');
-  const clientSlug = slug(brandName) || 'client';
-  const typeSlug   = slug(insp.typeName||'form');
-  const filename = `${clientSlug}-${typeSlug}-${dateSlug}.pdf`;
+  // Filename: "[Inspection Title] dd-mm-yy" (+ " Rev N" on a same-day repeat).
+  const filename = buildInspectionFilename(insp);
 
   const pdfBlob = doc.output('blob');
   savePdfWithFolderPicker(pdfBlob, filename);
@@ -7400,11 +7585,18 @@ function generatePDF(inspsOverride){
   // ── SAVE ──
   // Filename uses the client's brand name (from Report Branding) so the
   // PDF can be filed under the client's name on their system.
-  const slug = (s) => (s||'').replace(/[^a-z0-9]/gi,'-').replace(/-+/g,'-').toLowerCase().replace(/^-|-$/g,'');
-  const clientSlug = slug(brandName) || 'client';
-  const dateSlug   = new Date().toISOString().slice(0,10);
-  const periodSlug = allDates[0].toLocaleString('en-GB',{month:'short',year:'numeric'}).replace(' ','-');
-  const filename = `${clientSlug}-inspection-report-${periodSlug}-${dateSlug}.pdf`;
+  let filename;
+  if(insps.length === 1){
+    // Single inspection → "[Inspection Title] dd-mm-yy" (+ " Rev N" same-day repeat).
+    filename = buildInspectionFilename(insps[0]);
+  } else {
+    // Bulk period report (spans many inspections) keeps the client/period name.
+    const slug = (s) => (s||'').replace(/[^a-z0-9]/gi,'-').replace(/-+/g,'-').toLowerCase().replace(/^-|-$/g,'');
+    const clientSlug = slug(brandName) || 'client';
+    const dateSlug   = serverTodayISO();
+    const periodSlug = allDates[0].toLocaleString('en-GB',{month:'short',year:'numeric'}).replace(' ','-');
+    filename = `${clientSlug}-inspection-report-${periodSlug}-${dateSlug}.pdf`;
+  }
 
   // Hand off to folder picker / direct save
   const pdfBlob = doc.output('blob');

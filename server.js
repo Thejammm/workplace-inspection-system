@@ -37,6 +37,17 @@ app.get('/healthz', async (_req, res) => {
   res.json({ ok: true, db: true, ts: new Date().toISOString() });
 });
 
+// ── Server time ───────────────────────────────────────────────
+//   /api/time returns the authoritative server clock so the front-end can
+//   stamp inspections and fill date fields from a single source of truth
+//   rather than each device's (possibly wrong) local clock. Returns UTC ISO;
+//   the browser converts to Europe/London for display. No auth needed — it
+//   discloses nothing sensitive and is called before/independently of login.
+app.get('/api/time', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ now: new Date().toISOString() });
+});
+
 // ── API routes ────────────────────────────────────────────────
 app.use('/api/auth',  authRoutes);
 app.use('/api/state', stateRoutes);
