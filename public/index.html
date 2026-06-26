@@ -6125,23 +6125,37 @@ function migrateLoadedState(){
       if(!S.inspectionTypes[id]) S.inspectionTypes[id] = defaults[id];
     });
   }
-  // v4 → v4.1: MOT Q/C "Quality check type" and "Test class" are single-choice
-  // radio buttons. Earlier state could have these items with their input/options
-  // stripped (or as a plain select), so re-attach them from the library by id
-  // wherever MOT Q/C is stored, so the change reaches already-saved tenants.
+  // v4 → v4.1: MOT Q/C typed inputs. Several items are typed in the library —
+  // "Quality check type" / "Test class" are radio buttons, "Photo of tester's
+  // MOT inspection sheet" is a photo upload, "Any additional comments?" is a
+  // text box. Earlier state could have these stripped to pass/fail, so re-sync
+  // every item's input/options from the library by id wherever MOT Q/C is
+  // stored. Pass/fail items (no input in the library) are left untouched.
   try {
     const libMot = (typeof LIBRARY !== 'undefined') && LIBRARY.find(l => l.id === 'mot_qc');
-    const libItem = id => { let found = null; libMot && libMot.sections.forEach(s => s.items.forEach(i => { if(i.id === id) found = i; })); return found; };
-    const radioIds = ['mqc_s1','mqc_s2'];
-    const fixRadios = sections => (sections||[]).forEach(sec => (sec.items||[]).forEach(it => {
-      if(radioIds.includes(it.id)){
-        it.input = 'radio';
-        const li = libItem(it.id);
-        if(li && li.options) it.options = li.options.slice();
+    if(libMot){
+      const libItems = {};
+      libMot.sections.forEach(s => s.items.forEach(i => { libItems[i.id] = i; }));
+      const sync = sections => (sections||[]).forEach(sec => (sec.items||[]).forEach(it => {
+        const li = libItems[it.id];
+        if(!li || !li.input) return;
+        it.input = li.input;
+        if(li.options) it.options = li.options.slice();
+        if(li.columns) it.columns = JSON.parse(JSON.stringify(li.columns));
+      }));
+      if(S.inspectionTypes?.mot_qc) sync(S.inspectionTypes.mot_qc.sections);
+      if(S.draft?.typeId === 'mot_qc'){
+        sync(S.checklist);
+        // Drop stale pass/fail values left on items that are now typed inputs,
+        // so a photo cell doesn't try to render "pass" as an image, etc.
+        const STALE = new Set(['pass','action','na','rectified']);
+        if(S.draft.results){
+          Object.keys(libItems).forEach(id => {
+            if(libItems[id].input && STALE.has(S.draft.results[id])) delete S.draft.results[id];
+          });
+        }
       }
-    }));
-    if(S.inspectionTypes?.mot_qc) fixRadios(S.inspectionTypes.mot_qc.sections);
-    if(S.draft?.typeId === 'mot_qc') fixRadios(S.checklist);
+    }
   } catch(e){}
   // v4.2: Garage Q/C — the two "details" items (gqc_5/gqc_6) are replaced by a
   // "QC Outcome" two-column table. Update the stored type definition (and the
