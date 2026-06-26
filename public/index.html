@@ -1500,8 +1500,9 @@ const LIBRARY = [
         { id:'gqc_2', name:'Is job card write-up complete, including mileage and any parts used?' },
         { id:'gqc_3', name:"Are clocking's complete?" },
         { id:'gqc_4', name:'Was the vehicle parked correctly after completion?' },
-        { id:'gqc_5', name:'Details of any items that have been rechecked' },
-        { id:'gqc_6', name:'Please give details of any shortcomings' },
+      ]},
+      { id:'gqc_outcome_sec', name:'QC Outcome', icon:'📋', items:[
+        { id:'gqc_outcome', name:'QC Outcome', input:'table', columns:['Items Checked','Outcome'] },
       ]},
     ]
   },
@@ -1572,7 +1573,7 @@ const LIBRARY = [
 
 const DEFAULT_CHECKLIST = LIBRARY.find(s=>s.id==='garage_inspection').sections.map(s=>({
   id: s.id, name: s.name,
-  items: s.items.map(i=>({id:i.id, name:i.name, desc:i.desc, ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{})}))
+  items: s.items.map(i=>({id:i.id, name:i.name, desc:i.desc, ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}), ...(i.columns?{columns:i.columns.slice()}:{})}))
 }));
 
 // ══════════════════════════════════════════════════════════════
@@ -1827,7 +1828,7 @@ function buildDefaultInspectionTypes() {
       enabled:  true,
       sections: lib.sections.map(s => ({
         id: s.id, name: s.name,
-        items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}) }))
+        items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}), ...(i.columns?{columns:i.columns.slice()}:{}) }))
       }))
     };
   });
@@ -2574,6 +2575,7 @@ function renderChecklist() {
     const nTyped  = section.items.filter(i => {
       if(!i.input) return false;
       const v = results[i.id];
+      if(i.input === 'table') return _tableHasContent(v);
       if(Array.isArray(v)) return v.length > 0;
       return typeof v === 'string' && v.trim().length > 0;
     }).length;
@@ -2645,6 +2647,22 @@ function renderChecklist() {
               <div class="ci-controls" style="display:flex;flex-wrap:wrap;gap:8px;">
                 ${radios}
               </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      if(item.input === 'table'){
+        // Editable multi-row table (e.g. Garage Q/C "QC Outcome"). The section
+        // heading already shows the title, so the item name isn't repeated here.
+        const cols = item.columns || ['Items Checked','Outcome'];
+        const rows = Array.isArray(st) ? st : [];
+        html += `
+          <div class="ci-wrap" id="ciw-${item.id}" style="border-bottom:none;">
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+              <div id="tbl-${item.id}">${_renderQcTableInner(item.id, cols, rows)}</div>
+              <div><button type="button" class="btn btn-ghost btn-sm" onclick="addTableRow('${item.id}')">+ Add row</button></div>
             </div>
           </div>`;
         return;
@@ -2764,6 +2782,70 @@ function _highlightMissingItems(ids){
     const ctl = first.querySelector('select, textarea, input, button');
     if(ctl){ try { ctl.focus({ preventScroll:true }); } catch(e){ ctl.focus(); } }
   }
+}
+
+// ── Editable table item (Garage Q/C "QC Outcome") ─────────────
+// Stored in S.draft.results[itemId] as an array of rows, each row an array of
+// cell strings (one per column). Cell edits write through without re-rendering
+// (so focus is kept); add/remove rebuild just this item's table.
+function _tableHasContent(val){
+  return Array.isArray(val) && val.some(r => Array.isArray(r) && r.some(c => String(c||'').trim()));
+}
+function _findChecklistItem(itemId){
+  for(const sec of (S.checklist||[])){
+    for(const it of (sec.items||[])){ if(it.id === itemId) return it; }
+  }
+  return null;
+}
+function _renderQcTableInner(itemId, cols, rows){
+  const th = `<tr>${cols.map(c=>`<th style="text-align:left;padding:8px 10px;background:var(--muted-bg);border:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text);">${c}</th>`).join('')}<th style="width:38px;border:1px solid var(--border);background:var(--muted-bg);"></th></tr>`;
+  let body;
+  if(rows.length){
+    body = rows.map((row,ri)=>`<tr>
+      ${cols.map((c,ci)=>`<td style="padding:4px;border:1px solid var(--border);vertical-align:top;"><textarea rows="2" placeholder="${(c).replace(/"/g,'&quot;')}…" oninput="updateTableCell('${itemId}',${ri},${ci},this.value)" style="width:100%;min-height:auto;resize:vertical;">${String((row&&row[ci])||'').replace(/</g,'&lt;')}</textarea></td>`).join('')}
+      <td style="padding:4px;border:1px solid var(--border);text-align:center;vertical-align:top;"><button type="button" title="Remove row" onclick="removeTableRow('${itemId}',${ri})" style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:28px;height:28px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">✕</button></td>
+    </tr>`).join('');
+  } else {
+    body = `<tr><td colspan="${cols.length+1}" style="padding:12px;border:1px solid var(--border);text-align:center;font-size:13px;color:var(--text-muted);">No rows yet — use “+ Add row”.</td></tr>`;
+  }
+  return `<table style="width:100%;border-collapse:collapse;">${th}${body}</table>`;
+}
+function _refreshQcTable(itemId){
+  const cont = document.getElementById('tbl-'+itemId);
+  const item = _findChecklistItem(itemId);
+  if(!cont || !item) return;
+  const cols = item.columns || ['Items Checked','Outcome'];
+  const rows = Array.isArray(S.draft.results?.[itemId]) ? S.draft.results[itemId] : [];
+  cont.innerHTML = _renderQcTableInner(itemId, cols, rows);
+}
+function addTableRow(itemId){
+  if(!S.draft.results) S.draft.results = {};
+  const rows = Array.isArray(S.draft.results[itemId]) ? S.draft.results[itemId] : [];
+  rows.push([]);                       // new blank row (cells default to '')
+  S.draft.results[itemId] = rows;
+  _refreshQcTable(itemId);
+  // Focus the first cell of the new row.
+  const tbl = document.getElementById('tbl-'+itemId);
+  const lastRowFirstCell = tbl?.querySelector('tr:nth-last-child(1) textarea');
+  if(lastRowFirstCell) lastRowFirstCell.focus();
+  saveData();
+}
+function removeTableRow(itemId, ri){
+  const rows = Array.isArray(S.draft.results?.[itemId]) ? S.draft.results[itemId] : [];
+  rows.splice(ri, 1);
+  S.draft.results[itemId] = rows;
+  _refreshQcTable(itemId);
+  saveData();
+}
+function updateTableCell(itemId, ri, ci, value){
+  if(!S.draft.results) S.draft.results = {};
+  const rows = Array.isArray(S.draft.results[itemId]) ? S.draft.results[itemId] : [];
+  while(rows.length <= ri) rows.push([]);
+  if(!Array.isArray(rows[ri])) rows[ri] = [];
+  rows[ri][ci] = value;
+  S.draft.results[itemId] = rows;
+  if(String(value||'').trim()) document.getElementById('ciw-'+itemId)?.classList.remove('ci-missing');
+  scheduleAutoSave();
 }
 
 function setStatus(itemId, status) {
@@ -2984,9 +3066,14 @@ function submitInspection() {
   const missing=[];
   S.checklist.forEach(s=>s.items.forEach(i=>{
     const v = d.results[i.id];
-    const empty = (v === undefined || v === null || v === '') ||
-                  (Array.isArray(v) && v.length === 0) ||
-                  (typeof v === 'string' && v.trim() === '');
+    let empty;
+    if(i.input === 'table'){
+      empty = !_tableHasContent(v);          // needs at least one row with content
+    } else {
+      empty = (v === undefined || v === null || v === '') ||
+              (Array.isArray(v) && v.length === 0) ||
+              (typeof v === 'string' && v.trim() === '');
+    }
     if(empty) missing.push(i.id);
   }));
   if(missing.length){
@@ -4742,7 +4829,7 @@ function resetToDefaults(){
     if(!confirm(`Reset "${t.name}" to its built-in default? All customisations to this type will be removed.`)) return;
     t.sections = lib.sections.map(s => ({
       id: s.id, name: s.name,
-      items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}) }))
+      items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}), ...(i.columns?{columns:i.columns.slice()}:{}) }))
     }));
   }
   saveData(); renderMyChecklist(); _syncEditingToActiveDraft(); showToast('✓ Reset complete');
@@ -6013,6 +6100,24 @@ function migrateLoadedState(){
     }));
     if(S.inspectionTypes?.mot_qc) fixRadios(S.inspectionTypes.mot_qc.sections);
     if(S.draft?.typeId === 'mot_qc') fixRadios(S.checklist);
+  } catch(e){}
+  // v4.2: Garage Q/C — the two "details" items (gqc_5/gqc_6) are replaced by a
+  // "QC Outcome" two-column table. Update the stored type definition (and the
+  // active draft if it's Garage Q/C) to the new library structure. Submitted
+  // inspections are untouched — they render from their own checklistSnapshot.
+  try {
+    const libGqc = (typeof LIBRARY !== 'undefined') && LIBRARY.find(l => l.id === 'garage_qc');
+    const hasOld   = secs => (secs||[]).some(s => (s.items||[]).some(i => i.id === 'gqc_5' || i.id === 'gqc_6'));
+    const hasTable = secs => (secs||[]).some(s => (s.items||[]).some(i => i.input === 'table'));
+    if(libGqc){
+      const fresh = () => JSON.parse(JSON.stringify(libGqc.sections));
+      const t = S.inspectionTypes?.garage_qc;
+      if(t && hasOld(t.sections) && !hasTable(t.sections)) t.sections = fresh();
+      if(S.draft?.typeId === 'garage_qc' && hasOld(S.checklist) && !hasTable(S.checklist)){
+        S.checklist = fresh();
+        if(S.draft.results){ delete S.draft.results['gqc_5']; delete S.draft.results['gqc_6']; }
+      }
+    }
   } catch(e){}
   // Tag draft with a typeId if missing
   if(!S.draft) S.draft = {};
@@ -7435,6 +7540,39 @@ function generatePDF(inspsOverride){
           return;
         }
         sec.items.forEach((item, ii) => {
+          // Table items (e.g. "QC Outcome") render as a two-column table.
+          if(item.input === 'table'){
+            const cols = item.columns || ['Items Checked','Outcome'];
+            const rowsData = Array.isArray(insp.results?.[item.id]) ? insp.results[item.id] : [];
+            const colW = CW / cols.length, pad = 2, lineH = 4;
+            checkNewPage(12);
+            doc.setFillColor(...C.primary);
+            doc.rect(ML, y, CW, 6, 'F');
+            setFont('bold', 7.5, C.white);
+            cols.forEach((c, ci) => doc.text(String(c), ML + ci*colW + pad, y + 4));
+            y += 6;
+            if(!rowsData.length){
+              setFont('italic', 7, C.muted);
+              doc.text('(no rows recorded)', ML + pad, y + 4);
+              y += 6;
+            } else {
+              rowsData.forEach(row => {
+                setFont('normal', 8, C.charcoal);
+                const wrapped = cols.map((c, ci) => doc.splitTextToSize(String((row && row[ci]) || '—'), colW - pad*2));
+                const rowH = Math.max(1, ...wrapped.map(w => w.length)) * lineH + pad*2;
+                checkNewPage(rowH);
+                doc.setDrawColor(...C.border);
+                setFont('normal', 8, C.charcoal);
+                cols.forEach((c, ci) => {
+                  doc.rect(ML + ci*colW, y, colW, rowH);
+                  doc.text(wrapped[ci], ML + ci*colW + pad, y + pad + 3);
+                });
+                y += rowH;
+              });
+            }
+            y += 4;
+            return;
+          }
           const rawStatus = insp.results?.[item.id];
           // Typed-input items don't have pass/fail status — they have a
           // captured answer (string or array of photo URLs). Render the
