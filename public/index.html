@@ -1502,7 +1502,7 @@ const LIBRARY = [
         { id:'gqc_4', name:'Was the vehicle parked correctly after completion?' },
       ]},
       { id:'gqc_outcome_sec', name:'QC Outcome', icon:'📋', items:[
-        { id:'gqc_outcome', name:'QC Outcome', input:'table', columns:['Items Checked','Outcome'] },
+        { id:'gqc_outcome', name:'QC Outcome', input:'table', columns:['Items Checked','Outcome',{label:'Result',type:'passfail'}] },
       ]},
     ]
   },
@@ -2797,12 +2797,24 @@ function _findChecklistItem(itemId){
   }
   return null;
 }
+// A column is either a plain string (free-text cell) or { label, type } where
+// type 'passfail' renders Pass/Fail buttons instead of a text box.
+function _colLabel(c){ return typeof c === 'string' ? c : (c && c.label) || ''; }
+function _colType(c){ return typeof c === 'string' ? 'text' : (c && c.type) || 'text'; }
+function _renderQcCell(itemId, ri, ci, col, val){
+  if(_colType(col) === 'passfail'){
+    const v = String(val||'');
+    const btn = (label, value, onCol, offCol) => `<button type="button" onclick="setTableScore('${itemId}',${ri},${ci},'${value}')" style="flex:1;padding:6px 4px;border:1.5px solid ${v===value?onCol:'var(--border)'};border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;background:${v===value?onCol:'transparent'};color:${v===value?'#fff':onCol};">${label}</button>`;
+    return `<div style="display:flex;gap:6px;min-width:120px;">${btn('Pass','pass','var(--success)')}${btn('Fail','fail','var(--danger)')}</div>`;
+  }
+  return `<textarea rows="2" placeholder="${_colLabel(col).replace(/"/g,'&quot;')}…" oninput="updateTableCell('${itemId}',${ri},${ci},this.value)" style="width:100%;min-height:auto;resize:vertical;">${String(val||'').replace(/</g,'&lt;')}</textarea>`;
+}
 function _renderQcTableInner(itemId, cols, rows){
-  const th = `<tr>${cols.map(c=>`<th style="text-align:left;padding:8px 10px;background:var(--muted-bg);border:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text);">${c}</th>`).join('')}<th style="width:38px;border:1px solid var(--border);background:var(--muted-bg);"></th></tr>`;
+  const th = `<tr>${cols.map(c=>`<th style="text-align:left;padding:8px 10px;background:var(--muted-bg);border:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text);${_colType(c)==='passfail'?'width:150px;':''}">${_colLabel(c)}</th>`).join('')}<th style="width:38px;border:1px solid var(--border);background:var(--muted-bg);"></th></tr>`;
   let body;
   if(rows.length){
     body = rows.map((row,ri)=>`<tr>
-      ${cols.map((c,ci)=>`<td style="padding:4px;border:1px solid var(--border);vertical-align:top;"><textarea rows="2" placeholder="${(c).replace(/"/g,'&quot;')}…" oninput="updateTableCell('${itemId}',${ri},${ci},this.value)" style="width:100%;min-height:auto;resize:vertical;">${String((row&&row[ci])||'').replace(/</g,'&lt;')}</textarea></td>`).join('')}
+      ${cols.map((c,ci)=>`<td style="padding:4px;border:1px solid var(--border);vertical-align:top;">${_renderQcCell(itemId, ri, ci, c, row&&row[ci])}</td>`).join('')}
       <td style="padding:4px;border:1px solid var(--border);text-align:center;vertical-align:top;"><button type="button" title="Remove row" onclick="removeTableRow('${itemId}',${ri})" style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:28px;height:28px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">✕</button></td>
     </tr>`).join('');
   } else {
@@ -2846,6 +2858,18 @@ function updateTableCell(itemId, ri, ci, value){
   S.draft.results[itemId] = rows;
   if(String(value||'').trim()) document.getElementById('ciw-'+itemId)?.classList.remove('ci-missing');
   scheduleAutoSave();
+}
+// Pass/Fail score for a row. Clicking the already-selected value clears it.
+function setTableScore(itemId, ri, ci, value){
+  if(!S.draft.results) S.draft.results = {};
+  const rows = Array.isArray(S.draft.results[itemId]) ? S.draft.results[itemId] : [];
+  while(rows.length <= ri) rows.push([]);
+  if(!Array.isArray(rows[ri])) rows[ri] = [];
+  rows[ri][ci] = (rows[ri][ci] === value) ? '' : value;
+  S.draft.results[itemId] = rows;
+  document.getElementById('ciw-'+itemId)?.classList.remove('ci-missing');
+  _refreshQcTable(itemId);
+  saveData();
 }
 
 function setStatus(itemId, status) {
@@ -6117,6 +6141,15 @@ function migrateLoadedState(){
         S.checklist = fresh();
         if(S.draft.results){ delete S.draft.results['gqc_5']; delete S.draft.results['gqc_6']; }
       }
+      // Keep the QC Outcome table's columns in step with the library (e.g. when
+      // the Pass/Fail "Result" column is added to an already-migrated table).
+      let libCols = null;
+      libGqc.sections.forEach(s => s.items.forEach(i => { if(i.id === 'gqc_outcome') libCols = i.columns; }));
+      const syncCols = secs => (secs||[]).forEach(s => (s.items||[]).forEach(it => {
+        if(it.id === 'gqc_outcome' && libCols) it.columns = JSON.parse(JSON.stringify(libCols));
+      }));
+      if(t) syncCols(t.sections);
+      if(S.draft?.typeId === 'garage_qc') syncCols(S.checklist);
     }
   } catch(e){}
   // Tag draft with a typeId if missing
@@ -7543,13 +7576,24 @@ function generatePDF(inspsOverride){
           // Table items (e.g. "QC Outcome") render as a two-column table.
           if(item.input === 'table'){
             const cols = item.columns || ['Items Checked','Outcome'];
+            const colLabel = c => typeof c === 'string' ? c : (c && c.label) || '';
+            const colType  = c => typeof c === 'string' ? 'text' : (c && c.type) || 'text';
+            const cellText = (c, v) => colType(c) === 'passfail'
+              ? (v === 'pass' ? 'Pass' : v === 'fail' ? 'Fail' : '—')
+              : String(v || '—');
             const rowsData = Array.isArray(insp.results?.[item.id]) ? insp.results[item.id] : [];
-            const colW = CW / cols.length, pad = 2, lineH = 4;
+            const pad = 2, lineH = 4;
+            // Pass/Fail columns get a fixed narrow width; text columns share the rest.
+            const nScore = cols.filter(c => colType(c) === 'passfail').length;
+            const scoreW = 24;
+            const textW  = (CW - nScore*scoreW) / Math.max(1, cols.length - nScore);
+            const colW   = cols.map(c => colType(c) === 'passfail' ? scoreW : textW);
+            const colX   = []; let acc = ML; colW.forEach(w => { colX.push(acc); acc += w; });
             checkNewPage(12);
             doc.setFillColor(...C.primary);
             doc.rect(ML, y, CW, 6, 'F');
             setFont('bold', 7.5, C.white);
-            cols.forEach((c, ci) => doc.text(String(c), ML + ci*colW + pad, y + 4));
+            cols.forEach((c, ci) => doc.text(colLabel(c), colX[ci] + pad, y + 4));
             y += 6;
             if(!rowsData.length){
               setFont('italic', 7, C.muted);
@@ -7558,14 +7602,19 @@ function generatePDF(inspsOverride){
             } else {
               rowsData.forEach(row => {
                 setFont('normal', 8, C.charcoal);
-                const wrapped = cols.map((c, ci) => doc.splitTextToSize(String((row && row[ci]) || '—'), colW - pad*2));
+                const wrapped = cols.map((c, ci) => doc.splitTextToSize(cellText(c, row && row[ci]), colW[ci] - pad*2));
                 const rowH = Math.max(1, ...wrapped.map(w => w.length)) * lineH + pad*2;
                 checkNewPage(rowH);
                 doc.setDrawColor(...C.border);
-                setFont('normal', 8, C.charcoal);
                 cols.forEach((c, ci) => {
-                  doc.rect(ML + ci*colW, y, colW, rowH);
-                  doc.text(wrapped[ci], ML + ci*colW + pad, y + pad + 3);
+                  doc.rect(colX[ci], y, colW[ci], rowH);
+                  const v = row && row[ci];
+                  if(colType(c) === 'passfail' && (v === 'pass' || v === 'fail')){
+                    setFont('bold', 8, v === 'pass' ? C.success : C.danger);
+                  } else {
+                    setFont('normal', 8, C.charcoal);
+                  }
+                  doc.text(wrapped[ci], colX[ci] + pad, y + pad + 3);
                 });
                 y += rowH;
               });
