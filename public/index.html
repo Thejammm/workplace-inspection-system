@@ -132,6 +132,10 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 /* Highlight for required items left unanswered on submit (Amendment 4). */
 .ci-wrap.ci-missing{outline:2px solid var(--danger);outline-offset:-2px;border-radius:8px;background:var(--danger-bg);}
 .form-field-wrap.ff-missing{outline:2px solid var(--danger);outline-offset:2px;border-radius:8px;}
+/* Radio-button input for checklist items (e.g. MOT Q/C test class). */
+.ci-radio{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;user-select:none;}
+.ci-radio:has(input:checked){border-color:var(--accent);background:var(--accent-light);color:var(--accent-dark);}
+.ci-radio input{width:auto;min-height:auto;margin:0;cursor:pointer;accent-color:var(--accent);}
 .ci-wrap:last-child{border-bottom:none;}
 .ci-row{display:flex;align-items:flex-start;gap:10px;padding:14px 0;}
 .ci-main{flex:1;min-width:0;}
@@ -1507,8 +1511,8 @@ const LIBRARY = [
     color:'#e3f2fd',
     sections:[
       { id:'mqc_setup', name:'Test Setup', icon:'⚙️', items:[
-        { id:'mqc_s1', name:'Quality check type', input:'select', options:['Closely observe','Full re-inspection'] },
-        { id:'mqc_s2', name:'Test class',         input:'select', options:['1','2','4','5','7'] },
+        { id:'mqc_s1', name:'Quality check type', input:'radio', options:['Closely observe','Full re-inspection'] },
+        { id:'mqc_s2', name:'Test class',         input:'radio', options:['1','2','4','5','7'] },
       ]},
       { id:'mqc_inspection', name:'Vehicle Inspection Items', icon:'🔧', items:[
         { id:'mqc_i1', name:'Have pre-checks of the vehicle been carried out correctly?' },
@@ -1568,7 +1572,7 @@ const LIBRARY = [
 
 const DEFAULT_CHECKLIST = LIBRARY.find(s=>s.id==='garage_inspection').sections.map(s=>({
   id: s.id, name: s.name,
-  items: s.items.map(i=>({id:i.id, name:i.name, desc:i.desc}))
+  items: s.items.map(i=>({id:i.id, name:i.name, desc:i.desc, ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{})}))
 }));
 
 // ══════════════════════════════════════════════════════════════
@@ -1823,7 +1827,7 @@ function buildDefaultInspectionTypes() {
       enabled:  true,
       sections: lib.sections.map(s => ({
         id: s.id, name: s.name,
-        items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'' }))
+        items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}) }))
       }))
     };
   });
@@ -2614,6 +2618,32 @@ function renderChecklist() {
                   <option value="">— Select —</option>
                   ${opts}
                 </select>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      if(item.input === 'radio'){
+        // Single-choice radio buttons — one option selected, stored like a select.
+        const v = String(st || '');
+        const radios = (item.options||[]).map(o => {
+          const val = String(o);
+          const sel = v === val;
+          return `<label class="ci-radio">
+            <input type="radio" name="rad-${item.id}" value="${val.replace(/"/g,'&quot;')}"${sel?' checked':''} onchange="setStatus('${item.id}', this.value)">
+            <span>${o}</span>
+          </label>`;
+        }).join('');
+        html += `
+          <div class="ci-wrap" id="ciw-${item.id}">
+            <div class="ci-row">
+              <div class="ci-main">
+                <div class="ci-name">${item.name}</div>
+                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+              </div>
+              <div class="ci-controls" style="display:flex;flex-wrap:wrap;gap:8px;">
+                ${radios}
               </div>
             </div>
           </div>`;
@@ -4712,7 +4742,7 @@ function resetToDefaults(){
     if(!confirm(`Reset "${t.name}" to its built-in default? All customisations to this type will be removed.`)) return;
     t.sections = lib.sections.map(s => ({
       id: s.id, name: s.name,
-      items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'' }))
+      items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}) }))
     }));
   }
   saveData(); renderMyChecklist(); _syncEditingToActiveDraft(); showToast('✓ Reset complete');
@@ -5966,6 +5996,24 @@ function migrateLoadedState(){
       if(!S.inspectionTypes[id]) S.inspectionTypes[id] = defaults[id];
     });
   }
+  // v4 → v4.1: MOT Q/C "Quality check type" and "Test class" are single-choice
+  // radio buttons. Earlier state could have these items with their input/options
+  // stripped (or as a plain select), so re-attach them from the library by id
+  // wherever MOT Q/C is stored, so the change reaches already-saved tenants.
+  try {
+    const libMot = (typeof LIBRARY !== 'undefined') && LIBRARY.find(l => l.id === 'mot_qc');
+    const libItem = id => { let found = null; libMot && libMot.sections.forEach(s => s.items.forEach(i => { if(i.id === id) found = i; })); return found; };
+    const radioIds = ['mqc_s1','mqc_s2'];
+    const fixRadios = sections => (sections||[]).forEach(sec => (sec.items||[]).forEach(it => {
+      if(radioIds.includes(it.id)){
+        it.input = 'radio';
+        const li = libItem(it.id);
+        if(li && li.options) it.options = li.options.slice();
+      }
+    }));
+    if(S.inspectionTypes?.mot_qc) fixRadios(S.inspectionTypes.mot_qc.sections);
+    if(S.draft?.typeId === 'mot_qc') fixRadios(S.checklist);
+  } catch(e){}
   // Tag draft with a typeId if missing
   if(!S.draft) S.draft = {};
   if(!S.draft.typeId) S.draft.typeId = 'garage_inspection';
