@@ -1271,6 +1271,15 @@ function _updateActiveClientBar() {
   }
 }
 
+// HTML-escape user-entered values before putting them in innerHTML (XSS-safe).
+// Ported from the H&S Management System. Do NOT use in the jsPDF report code
+// (plain-text rendering) or it would show literal ampersand/entity codes.
+function esc(v){
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 function renderClientList() {
   const el = document.getElementById('clientListEl');
   if (!el) return;
@@ -2105,7 +2114,7 @@ function renderForm() {
     card.className = 'card';
     card.style.animationDelay = (0.04 + si*0.06) + 's';
 
-    let html = `<div class="card-band"><h3><span class="dot">●</span> ${sec.name}</h3></div><div class="card-body" style="display:flex;flex-direction:column;gap:14px;">`;
+    let html = `<div class="card-band"><h3><span class="dot">●</span> ${esc(sec.name)}</h3></div><div class="card-body" style="display:flex;flex-direction:column;gap:14px;">`;
 
     // Walk with an index so we can pair adjacent halfWidth fields onto one row.
     let pendingRow = null;
@@ -2183,15 +2192,15 @@ function renderFormField(f, data) {
 
     case 'textarea':
       return `<div class="field-group">${label}
-        <textarea id="ff-${f.id}" rows="3" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="${f.placeholder||''}" oninput="updateFormField('${f.id}', this.value)">${v||''}</textarea></div>`;
+        <textarea id="ff-${f.id}" rows="3" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="${f.placeholder||''}" oninput="updateFormField('${f.id}', this.value)">${esc(v||'')}</textarea></div>`;
 
     case 'date':
       return `<div class="field-group">${label}
-        <input type="date" id="ff-${f.id}" autocomplete="off" value="${v||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
+        <input type="date" id="ff-${f.id}" autocomplete="off" value="${esc(v||'')}" oninput="updateFormField('${f.id}', this.value)"></div>`;
 
     case 'datetime':
       return `<div class="field-group">${label}
-        <input type="datetime-local" id="ff-${f.id}" autocomplete="off" value="${v||''}" oninput="updateFormField('${f.id}', this.value)"></div>`;
+        <input type="datetime-local" id="ff-${f.id}" autocomplete="off" value="${esc(v||'')}" oninput="updateFormField('${f.id}', this.value)"></div>`;
 
     case 'select': {
       const opts = (f.options||[]).map(o => `<option value="${o.value}"${o.value===v?' selected':''}>${o.label}</option>`).join('');
@@ -2446,7 +2455,7 @@ function renderInspectionTypeGrid() {
       <div class="scenario-card${isActive?' active':''}" onclick="switchInspectionType('${t.id}')">
         ${badgeHtml}${delHtml}
         <div class="scenario-icon">${t.icon||'📋'}</div>
-        <div class="scenario-name">${t.name}</div>
+        <div class="scenario-name">${esc(t.name)}</div>
         <div class="scenario-regs">${meta}</div>
       </div>`;
   }).join('');
@@ -2612,8 +2621,8 @@ function renderChecklist() {
           <div class="ci-wrap" id="ciw-${item.id}">
             <div class="ci-row">
               <div class="ci-main">
-                <div class="ci-name">${item.name}</div>
-                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+                <div class="ci-name">${esc(item.name)}</div>
+                ${item.desc?`<div class="ci-desc">${esc(item.desc)}</div>`:''}
               </div>
               <div class="ci-controls" style="min-width:220px;">
                 <select id="sel-${item.id}" onchange="setStatus('${item.id}', this.value)" style="width:100%;">
@@ -2641,8 +2650,8 @@ function renderChecklist() {
           <div class="ci-wrap" id="ciw-${item.id}">
             <div class="ci-row">
               <div class="ci-main">
-                <div class="ci-name">${item.name}</div>
-                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+                <div class="ci-name">${esc(item.name)}</div>
+                ${item.desc?`<div class="ci-desc">${esc(item.desc)}</div>`:''}
               </div>
               <div class="ci-controls" style="display:flex;flex-wrap:wrap;gap:8px;">
                 ${radios}
@@ -2660,7 +2669,7 @@ function renderChecklist() {
         html += `
           <div class="ci-wrap" id="ciw-${item.id}" style="border-bottom:none;">
             <div style="display:flex;flex-direction:column;gap:10px;">
-              ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+              ${item.desc?`<div class="ci-desc">${esc(item.desc)}</div>`:''}
               <div id="tbl-${item.id}">${_renderQcTableInner(item.id, cols, rows)}</div>
               <div><button type="button" class="btn btn-ghost btn-sm" onclick="addTableRow('${item.id}')">+ Add row</button></div>
             </div>
@@ -2674,8 +2683,8 @@ function renderChecklist() {
           <div class="ci-wrap" id="ciw-${item.id}">
             <div class="ci-row" style="flex-direction:column;align-items:stretch;gap:6px;">
               <div class="ci-main">
-                <div class="ci-name">${item.name}</div>
-                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+                <div class="ci-name">${esc(item.name)}</div>
+                ${item.desc?`<div class="ci-desc">${esc(item.desc)}</div>`:''}
               </div>
               <textarea id="ta-${item.id}" rows="3" placeholder="${(item.placeholder||'').replace(/"/g,'&quot;')}" oninput="setStatus('${item.id}', this.value)" style="width:100%;">${v.replace(/</g,'&lt;')}</textarea>
             </div>
@@ -2690,8 +2699,8 @@ function renderChecklist() {
           <div class="ci-wrap" id="ciw-${item.id}">
             <div class="ci-row" style="flex-direction:column;align-items:stretch;gap:8px;">
               <div class="ci-main">
-                <div class="ci-name">${item.name}</div>
-                ${item.desc?`<div class="ci-desc">${item.desc}</div>`:''}
+                <div class="ci-name">${esc(item.name)}</div>
+                ${item.desc?`<div class="ci-desc">${esc(item.desc)}</div>`:''}
               </div>
               <div class="photo-upload-zone" id="ip-zone-${item.id}">
                 ${renderItemPhotoThumbs(photos, item.id)}
@@ -2710,8 +2719,8 @@ function renderChecklist() {
         <div class="ci-wrap" id="ciw-${item.id}">
           <div class="ci-row">
             <div class="ci-main">
-              <div class="ci-name">${item.name}</div>
-              <div class="ci-desc">${item.desc}</div>
+              <div class="ci-name">${esc(item.name)}</div>
+              <div class="ci-desc">${esc(item.desc)}</div>
             </div>
             <div class="ci-controls">
               <button class="stt-btn ${st==='pass'      ?'stt-pass':''}"      onclick="setStatus('${item.id}','pass')">✓ Pass</button>
@@ -2728,7 +2737,7 @@ function renderChecklist() {
                 <div class="field-group"><label class="field-label">What was found &amp; what was done to rectify it</label>
                   <textarea id="rdi-${item.id}" rows="2" placeholder="Describe the issue found and the corrective action taken on the spot…" oninput="cacheRD('${item.id}')">${itRd.note||''}</textarea></div>
                 <div class="field-group"><label class="field-label">Rectified by</label>
-                  <input type="text" id="rdb-${item.id}" placeholder="Name of person who rectified" value="${itRd.by||''}" oninput="cacheRD('${item.id}')"></div>
+                  <input type="text" id="rdb-${item.id}" placeholder="Name of person who rectified" value="${esc(itRd.by||'')}" oninput="cacheRD('${item.id}')"></div>
               </div>
             </div>
             <div class="action-panel ${st==='action'?'open':''}" id="ap-${item.id}">
@@ -2737,7 +2746,7 @@ function renderChecklist() {
                 <div class="field-group span-2"><label class="field-label">Describe the issue precisely</label>
                   <textarea id="adi-${item.id}" rows="2" placeholder="What specifically is wrong? Location, extent, context." oninput="cacheAD('${item.id}')">${itAd.issue||''}</textarea></div>
                 <div class="field-group"><label class="field-label">Action taken / assigned to</label>
-                  <input type="text" id="ada-${item.id}" placeholder="Fixed by [name] / Assigned to [name]" value="${itAd.assignedTo||''}" oninput="cacheAD('${item.id}')"></div>
+                  <input type="text" id="ada-${item.id}" placeholder="Fixed by [name] / Assigned to [name]" value="${esc(itAd.assignedTo||'')}" oninput="cacheAD('${item.id}')"></div>
                 <div class="field-group"><label class="field-label">Target date</label>
                   <input type="date" id="add-${item.id}" value="${itAd.dueDate||''}" onchange="cacheAD('${item.id}')"></div>
                 <div class="field-group span-2">
@@ -3413,40 +3422,40 @@ function renderActions() {
       <div class="ac-top">
         <div style="flex:1">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span class="ac-title">${a.itemName}</span>
+            <span class="ac-title">${esc(a.itemName)}</span>
             ${a.resolved?`<span class="badge badge-success">✓ Resolved</span>`:overdue?`<span class="badge badge-danger">Overdue</span>`:`<span class="badge badge-warning">Open</span>`}
           </div>
           <div class="ac-meta">
-            <span>📍 ${a.location}</span><span>📅 ${fmtDate(a.periodTo)}</span>
-            <span>👤 ${a.manager}</span><span>📂 ${a.sectionName}</span>
+            <span>📍 ${esc(a.location)}</span><span>📅 ${fmtDate(a.periodTo)}</span>
+            <span>👤 ${esc(a.manager)}</span><span>📂 ${esc(a.sectionName)}</span>
             ${a.dueDate&&!a.resolved?`<span>⏰ Due ${fmtDate(a.dueDate)}</span>`:''}
-            ${a.resolved?`<span style="color:var(--success)">✓ ${fmtDate(a.resolvedAt?.slice(0,10))} · ${a.resolvedBy}</span>`:''}
+            ${a.resolved?`<span style="color:var(--success)">✓ ${fmtDate(a.resolvedAt?.slice(0,10))} · ${esc(a.resolvedBy)}</span>`:''}
           </div>
         </div>
         <button class="no-print" onclick="deleteAction('${a.id}')" title="Remove this action item"
           style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:28px;height:28px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0;align-self:flex-start;">✕</button>
       </div>
-      <div style="font-size:13px;margin-bottom:${a.assignedTo?'6px':'0'};"><strong>Issue:</strong> ${a.issue}</div>
-      ${a.assignedTo?`<div style="font-size:13px;color:var(--text-muted);"><strong>Assigned:</strong> ${a.assignedTo}</div>`:''}
-      ${a.note?`<div style="font-size:13px;color:var(--info);margin-top:6px;padding:8px 10px;background:var(--info-bg);border:1px solid var(--info-brd);border-radius:6px;">💬 ${a.note}</div>`:''}
+      <div style="font-size:13px;margin-bottom:${a.assignedTo?'6px':'0'};"><strong>Issue:</strong> ${esc(a.issue)}</div>
+      ${a.assignedTo?`<div style="font-size:13px;color:var(--text-muted);"><strong>Assigned:</strong> ${esc(a.assignedTo)}</div>`:''}
+      ${a.note?`<div style="font-size:13px;color:var(--info);margin-top:6px;padding:8px 10px;background:var(--info-bg);border:1px solid var(--info-brd);border-radius:6px;">💬 ${esc(a.note)}</div>`:''}
       ${(a.beforePhotos&&a.beforePhotos.length)||(a.afterPhotos&&a.afterPhotos.length)?`
         <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;">
           ${a.beforePhotos&&a.beforePhotos.length?`<div>
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--warning);margin-bottom:6px;">Before</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">${a.beforePhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','Before — ${a.itemName}')" alt="Before photo ${pi+1}">`).join('')}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">${a.beforePhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','Before — ${esc(a.itemName)}')" alt="Before photo ${pi+1}">`).join('')}</div>
           </div>`:''}
           ${a.afterPhotos&&a.afterPhotos.length?`<div>
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--success);margin-bottom:6px;">After</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">${a.afterPhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','After — ${a.itemName}')" alt="After photo ${pi+1}">`).join('')}</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">${a.afterPhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','After — ${esc(a.itemName)}')" alt="After photo ${pi+1}">`).join('')}</div>
           </div>`:''}
         </div>`:''}
       ${!a.resolved?`
         <div class="resolve-panel">
           <div class="rp-label">✓ Mark as Resolved</div>
           <div class="field-grid" style="margin-bottom:10px;">
-            <div class="field-group"><label class="field-label">Resolved by</label><input type="text" id="rb-${a.id}" placeholder="Name" value="${a.resolvedBy||''}"></div>
+            <div class="field-group"><label class="field-label">Resolved by</label><input type="text" id="rb-${a.id}" placeholder="Name" value="${esc(a.resolvedBy||'')}"></div>
             <div class="field-group"><label class="field-label">Date resolved</label><input type="date" id="rd-${a.id}" value="${new Date().toISOString().split('T')[0]}"></div>
-            <div class="field-group span-2"><label class="field-label">What was done</label><textarea id="rn-${a.id}" rows="2" placeholder="Brief description of corrective action…">${a.resolvedNote||''}</textarea></div>
+            <div class="field-group span-2"><label class="field-label">What was done</label><textarea id="rn-${a.id}" rows="2" placeholder="Brief description of corrective action…">${esc(a.resolvedNote||'')}</textarea></div>
             <div class="field-group span-2">
               <label class="field-label">📷 After Photo — Evidence of Resolution</label>
               <div class="photo-upload-zone" id="after-zone-${a.id}">
@@ -3461,7 +3470,7 @@ function renderActions() {
           <button class="btn btn-success btn-sm" onclick="resolveAction('${a.id}')">✓ Confirm Resolution</button>
         </div>`:`
         <div style="margin-top:10px;padding:10px 12px;background:var(--success-bg);border:1px solid var(--success-brd);border-radius:7px;font-size:13px;color:var(--success);">
-          <strong>Resolution:</strong> ${a.resolvedNote||'(no notes recorded)'}
+          <strong>Resolution:</strong> ${esc(a.resolvedNote||'(no notes recorded)')}
         </div>`}`;
     cont.appendChild(div);
   });
@@ -3473,7 +3482,7 @@ function deleteAction(id){
   if(_blockIfReadOnly()) return;
   const a = S.actions.find(x => x.id === id);
   if(!a) return;
-  if(!confirm(`Remove this action?\n\n"${a.itemName}"\n\nThis deletes the action item itself; the inspection it came from is not changed. This cannot be undone.`)) return;
+  if(!confirm(`Remove this action?\n\n"${esc(a.itemName)}"\n\nThis deletes the action item itself; the inspection it came from is not changed. This cannot be undone.`)) return;
   S.actions = S.actions.filter(x => x.id !== id);
   saveData(); updateBadge();
   renderActions(); renderActionStats();
@@ -3806,9 +3815,9 @@ function _renderFormReportCard(insp, archived){
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:14px;">
         ${subHeading?`<span style="font-size:13px;font-weight:600;color:var(--text-muted);">${subHeading}</span>`:''}
         <span style="font-size:13px;color:var(--text-muted);">📅 ${fmtDate(insp.periodTo)}</span>
-        <span style="font-size:13px;color:var(--text-muted);">📍 ${insp.location||'—'}</span>
-        <span style="font-size:13px;color:var(--text-muted);">👤 ${insp.manager||'—'}</span>
-        ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${insp.ref}</span>`:''}
+        <span style="font-size:13px;color:var(--text-muted);">📍 ${esc(insp.location||'—')}</span>
+        <span style="font-size:13px;color:var(--text-muted);">👤 ${esc(insp.manager||'—')}</span>
+        ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${esc(insp.ref)}</span>`:''}
       </div>`;
 
   if(form?.sections){
@@ -3818,7 +3827,7 @@ function _renderFormReportCard(insp, archived){
       const fieldsToShow = sec.fields.filter(f => !['instruction','checklist','disclaimer'].includes(f.type));
       if(!fieldsToShow.length) return;
       html += `<div style="margin-bottom:16px;">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--primary);margin-bottom:8px;padding-bottom:4px;border-bottom:1.5px solid var(--border);">${sec.name}</div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--primary);margin-bottom:8px;padding-bottom:4px;border-bottom:1.5px solid var(--border);">${esc(sec.name)}</div>
         <div style="display:flex;flex-direction:column;gap:8px;">`;
       fieldsToShow.forEach(f => {
         // Honour conditional visibility — hidden fields shouldn't appear in the report either
@@ -3858,7 +3867,7 @@ function _renderFormReportCard(insp, archived){
   }
 
   if(insp.generalNotes){
-    html += `<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-top:8px;">"${insp.generalNotes}"</div>`;
+    html += `<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-top:8px;">"${esc(insp.generalNotes)}"</div>`;
   }
 
   // Manager sign-off — same control as checklist inspections.
@@ -4067,10 +4076,10 @@ function renderMonthlyReport(){
         <!-- Meta row -->
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:14px;">
           ${cardSubHeading?`<span style="font-size:13px;font-weight:600;color:var(--text-muted);">📅 ${cardSubHeading}</span>`:''}
-          <span style="font-size:13px;color:var(--text-muted);">📍 ${insp.location||'—'}</span>
-          <span style="font-size:13px;color:var(--text-muted);">👤 ${insp.manager||'—'}</span>
+          <span style="font-size:13px;color:var(--text-muted);">📍 ${esc(insp.location||'—')}</span>
+          <span style="font-size:13px;color:var(--text-muted);">👤 ${esc(insp.manager||'—')}</span>
           <span style="font-size:13px;color:var(--text-muted);">🔁 ${freqLabels[insp.freq]||insp.freq}</span>
-          ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${insp.ref}</span>`:''}
+          ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${esc(insp.ref)}</span>`:''}
         </div>
 
         <!-- Per-inspection stat pills -->
@@ -4083,7 +4092,7 @@ function renderMonthlyReport(){
           ${iOverdue>0?`<div style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:var(--danger-bg);border:1px solid var(--danger-brd);border-radius:6px;font-size:12px;font-weight:700;color:var(--danger);">🔴 ${iOverdue} Overdue</div>`:''}
         </div>
 
-        ${insp.generalNotes?`<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-bottom:14px;">"${insp.generalNotes}"</div>`:''}`;
+        ${insp.generalNotes?`<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-bottom:14px;">"${esc(insp.generalNotes)}"</div>`:''}`;
 
     // Item notes
     const notedItems=[];
@@ -4113,8 +4122,8 @@ function renderMonthlyReport(){
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#065f46;margin-bottom:8px;">✔ Rectified On Site</div>`;
       rectItems.forEach(({item,sec,rd})=>{
         html+=`<div style="padding:8px 12px;margin-bottom:6px;background:#ecfdf5;border:1.5px solid #6ee7b7;border-left:4px solid #059669;border-radius:7px;">
-          <div style="font-size:13px;font-weight:600;color:#065f46;margin-bottom:2px;">✔ ${item.name}</div>
-          <div style="font-size:11px;color:#6ee7b7;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">${sec.name}</div>
+          <div style="font-size:13px;font-weight:600;color:#065f46;margin-bottom:2px;">✔ ${esc(item.name)}</div>
+          <div style="font-size:11px;color:#6ee7b7;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">${esc(sec.name)}</div>
           ${rd.note?`<div style="font-size:13px;color:#065f46;">${rd.note}</div>`:''}
           ${rd.by?`<div style="font-size:12px;color:#059669;margin-top:2px;">By: ${rd.by}</div>`:''}
         </div>`;
@@ -4129,18 +4138,18 @@ function renderMonthlyReport(){
         const isOverdue=!a.resolved&&a.dueDate&&new Date(a.dueDate)<today;
         html+=`<div class="journey-item" style="padding:12px 0;">
           <div class="journey-title" style="margin-bottom:10px;">
-            ${a.itemName}
-            <span style="font-size:12px;font-weight:400;color:var(--text-muted);">${a.sectionName}</span>
+            ${esc(a.itemName)}
+            <span style="font-size:12px;font-weight:400;color:var(--text-muted);">${esc(a.sectionName)}</span>
             ${a.resolved?`<span class="badge badge-success">✓ Closed</span>`:isOverdue?`<span class="badge badge-danger">Overdue</span>`:`<span class="badge badge-warning">Open</span>`}
           </div>
           <div class="jt-row">
             <div class="jt-spine"><div class="jt-dot found">1</div><div class="jt-line"></div></div>
             <div class="jt-content">
               <div class="jt-step-lbl found">Identified</div>
-              <div class="jt-text">${a.issue||'—'}</div>
-              <div class="jt-small">Period to ${fmtDate(a.periodTo)} · ${a.manager}</div>
-              ${a.note?`<div style="font-size:12px;margin-top:5px;padding:6px 9px;background:var(--info-bg);border:1px solid var(--info-brd);border-radius:5px;color:var(--info);">💬 ${a.note}</div>`:''}
-              ${a.beforePhotos&&a.beforePhotos.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${a.beforePhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','Before — ${a.itemName}')" alt="Before ${pi+1}" title="Before photo — click to enlarge">`).join('')}</div>`:''}
+              <div class="jt-text">${esc(a.issue||'—')}</div>
+              <div class="jt-small">Period to ${fmtDate(a.periodTo)} · ${esc(a.manager)}</div>
+              ${a.note?`<div style="font-size:12px;margin-top:5px;padding:6px 9px;background:var(--info-bg);border:1px solid var(--info-brd);border-radius:5px;color:var(--info);">💬 ${esc(a.note)}</div>`:''}
+              ${a.beforePhotos&&a.beforePhotos.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${a.beforePhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','Before — ${esc(a.itemName)}')" alt="Before ${pi+1}" title="Before photo — click to enlarge">`).join('')}</div>`:''}
             </div>
           </div>
           <div class="jt-row">
@@ -4148,7 +4157,7 @@ function renderMonthlyReport(){
             <div class="jt-content">
               <div class="jt-step-lbl actioned">Actioned</div>
               ${a.assignedTo
-                ?`<div class="jt-text">${a.assignedTo}</div>${a.dueDate?`<div class="jt-small">Due: ${fmtDate(a.dueDate)}${isOverdue?' <strong style="color:var(--danger)">— OVERDUE</strong>':''}</div>`:''}`
+                ?`<div class="jt-text">${esc(a.assignedTo)}</div>${a.dueDate?`<div class="jt-small">Due: ${fmtDate(a.dueDate)}${isOverdue?' <strong style="color:var(--danger)">— OVERDUE</strong>':''}</div>`:''}`
                 :`<div class="jt-text" style="color:var(--text-muted);font-style:italic;">No assignment recorded</div>`}
             </div>
           </div>
@@ -4157,7 +4166,7 @@ function renderMonthlyReport(){
             <div class="jt-content last">
               <div class="jt-step-lbl ${a.resolved?'resolved':'pending'}">${a.resolved?'Resolved':'Awaiting Resolution'}</div>
               ${a.resolved
-                ?`<div class="jt-text" style="color:var(--success);">✓ ${a.resolvedNote||'Completed'}</div><div class="jt-small">By ${a.resolvedBy} · ${fmtDate(a.resolvedAt?.slice(0,10))}</div>${a.afterPhotos&&a.afterPhotos.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${a.afterPhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','After — ${a.itemName}')" alt="After ${pi+1}" title="After photo — click to enlarge">`).join('')}</div>`:''}`
+                ?`<div class="jt-text" style="color:var(--success);">✓ ${a.resolvedNote||'Completed'}</div><div class="jt-small">By ${esc(a.resolvedBy)} · ${fmtDate(a.resolvedAt?.slice(0,10))}</div>${a.afterPhotos&&a.afterPhotos.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${a.afterPhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','After — ${esc(a.itemName)}')" alt="After ${pi+1}" title="After photo — click to enlarge">`).join('')}</div>`:''}`
                 :`<div class="jt-text" style="color:var(--text-muted);font-style:italic;">Not yet resolved</div>`}
             </div>
           </div>
@@ -4278,12 +4287,12 @@ function _archiveCardHTML(insp){
     <div class="card-body">
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;${pills?'padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px;':''}">
         <span style="font-size:13px;color:var(--text-muted);">📅 ${fmtDate(insp.periodTo)}</span>
-        <span style="font-size:13px;color:var(--text-muted);">📍 ${insp.location||'—'}</span>
-        <span style="font-size:13px;color:var(--text-muted);">👤 ${insp.manager||'—'}</span>
-        ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${insp.ref}</span>`:''}
+        <span style="font-size:13px;color:var(--text-muted);">📍 ${esc(insp.location||'—')}</span>
+        <span style="font-size:13px;color:var(--text-muted);">👤 ${esc(insp.manager||'—')}</span>
+        ${insp.ref?`<span style="font-size:13px;color:var(--text-muted);">🔖 ${esc(insp.ref)}</span>`:''}
       </div>
       ${pills?`<div style="display:flex;gap:6px;flex-wrap:wrap;">${pills}</div>`:''}
-      ${insp.generalNotes?`<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-top:${pills?'12px':'0'};">"${insp.generalNotes}"</div>`:''}
+      ${insp.generalNotes?`<div style="font-size:13px;color:var(--text-muted);font-style:italic;padding:10px 14px;background:var(--muted-bg);border-radius:6px;margin-top:${pills?'12px':'0'};">"${esc(insp.generalNotes)}"</div>`:''}
     </div>
   </div>`;
 }
@@ -4335,7 +4344,7 @@ function renderAuditSections(){
   const coms=S.audit?.sectionComments||{};
   cont.innerHTML=S.checklist.map((sec,i)=>`
     <div style="margin-bottom:${i<S.checklist.length-1?'20px':'0'};">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--primary);padding-bottom:8px;border-bottom:1.5px solid var(--border);margin-bottom:10px;">${sec.name}</div>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--primary);padding-bottom:8px;border-bottom:1.5px solid var(--border);margin-bottom:10px;">${esc(sec.name)}</div>
       <div class="field-group"><label class="field-label">Audit observations</label>
         <textarea id="asc-${sec.id}" rows="2" placeholder="Recurring issues, good practice, concerns for this area." oninput="cacheAuditSec('${sec.id}')">${coms[sec.id]||''}</textarea>
       </div>
@@ -4404,7 +4413,7 @@ function renderBuilderTypeSelector(){
   }
   sel.innerHTML = types.map(t => {
     const tag = _isCustomType(t.id) ? ' (custom)' : '';
-    return `<option value="${t.id}"${t.id===_editingTypeId?' selected':''}>${t.icon||'📋'} ${t.name}${tag}</option>`;
+    return `<option value="${t.id}"${t.id===_editingTypeId?' selected':''}>${t.icon||'📋'} ${esc(t.name)}${tag}</option>`;
   }).join('');
 
   // Toggle Delete button visibility — only show for custom types
@@ -4415,7 +4424,7 @@ function renderBuilderTypeSelector(){
   const title = document.getElementById('builderEditingTitle');
   if(title){
     const t = _editingType();
-    title.textContent = t ? `${t.icon||'📋'} ${t.name}` : 'Your Checklist';
+    title.textContent = t ? `${t.icon||'📋'} ${esc(t.name)}` : 'Your Checklist';
   }
 }
 
@@ -4442,7 +4451,7 @@ function openCreateInspectionType(){
          <select id="mNewTypeStart">
            <option value="blank">Blank checklist (add sections yourself)</option>
            ${Object.values(S.inspectionTypes||{}).filter(t=>t.kind==='checklist').map(t =>
-             `<option value="copy:${t.id}">Copy from "${t.name}"</option>`
+             `<option value="copy:${t.id}">Copy from "${esc(t.name)}"</option>`
            ).join('')}
          </select>
        </div>
@@ -4514,7 +4523,7 @@ function deleteInspectionType(typeId){
     showToast('Built-in inspection types cannot be deleted.','error');
     return;
   }
-  if(!confirm(`Delete custom inspection type "${t.name}"?\n\nThis removes the template only — already submitted inspections of this type are not affected.`)) return;
+  if(!confirm(`Delete custom inspection type "${esc(t.name)}"?\n\nThis removes the template only — already submitted inspections of this type are not affected.`)) return;
 
   const wasActive = S.draft?.typeId === typeId;
   const wasEditing = _editingTypeId === typeId;
@@ -4537,7 +4546,7 @@ function deleteInspectionType(typeId){
   renderBuilderTypeSelector();
   renderMyChecklist();
   renderInspectionTypeGrid();
-  showToast(`Deleted "${t.name}"`);
+  showToast(`Deleted "${esc(t.name)}"`);
 }
 
 function renderMyChecklist(){
@@ -4559,7 +4568,7 @@ function renderMyChecklist(){
     let html=`
       <div class="cl-sec-head">
         <span class="cl-sec-drag" title="Drag to reorder">⠿</span>
-        <span class="cl-sec-name">${sec.name}</span>
+        <span class="cl-sec-name">${esc(sec.name)}</span>
         <span class="cl-sec-count">${sec.items.length} item${sec.items.length!==1?'s':''}</span>
         <div class="cl-sec-actions">
           <button class="btn btn-xs btn-outline" onclick="openEditSection('${sec.id}')">✏️ Rename</button>
@@ -4571,8 +4580,8 @@ function renderMyChecklist(){
     sec.items.forEach(item=>{
       html+=`<div class="cl-item">
         <div class="cl-item-text">
-          <div class="cl-item-name">${item.name}</div>
-          <div class="cl-item-desc">${item.desc}</div>
+          <div class="cl-item-name">${esc(item.name)}</div>
+          <div class="cl-item-desc">${esc(item.desc)}</div>
         </div>
         <div class="cl-item-btns">
           <button class="btn btn-xs btn-outline" onclick="openEditItem('${sec.id}','${item.id}')">✏️</button>
@@ -4594,7 +4603,7 @@ function renderScenarioGrid(){
   LIBRARY.forEach(scenario=>{
     const div=document.createElement('div');
     div.className=`scenario-card${_activeScenario===scenario.id?' active':''}`;
-    div.innerHTML=`<div class="scenario-icon">${scenario.icon}</div><div class="scenario-name">${scenario.name}</div><div class="scenario-regs">${scenario.regs}</div>`;
+    div.innerHTML=`<div class="scenario-icon">${scenario.icon}</div><div class="scenario-name">${esc(scenario.name)}</div><div class="scenario-regs">${esc(scenario.regs)}</div>`;
     div.onclick=()=>loadScenario(scenario.id);
     grid.appendChild(div);
   });
@@ -4604,8 +4613,8 @@ function loadScenario(scenarioId){
   _activeScenario=scenarioId;
   renderScenarioGrid();
   const scenario=LIBRARY.find(s=>s.id===scenarioId); if(!scenario) return;
-  document.getElementById('libScenarioTitle').textContent=`${scenario.icon} ${scenario.name}`;
-  document.getElementById('libScenarioRegs').textContent=`Relevant legislation: ${scenario.regs}`;
+  document.getElementById('libScenarioTitle').textContent=`${scenario.icon} ${esc(scenario.name)}`;
+  document.getElementById('libScenarioRegs').textContent=`Relevant legislation: ${esc(scenario.regs)}`;
   document.getElementById('libraryBrowser').style.display='block';
   renderLibrarySections(scenario);
 }
@@ -4620,7 +4629,7 @@ function renderLibrarySections(scenario){
     let html=`
       <div class="lib-sec-head" onclick="toggleLibSection('lsb-${sec.id}','lsbt-${sec.id}')">
         <span class="lib-sec-icon">${sec.icon||'📋'}</span>
-        <span class="lib-sec-name">${sec.name}</span>
+        <span class="lib-sec-name">${esc(sec.name)}</span>
         <span class="lib-sec-meta">${sec.items.length} items</span>
         ${alreadyAdded?`<span class="badge badge-success" style="flex-shrink:0;">✓ In checklist</span>`:''}
         <span class="lib-sec-toggle" id="lsbt-${sec.id}">▼</span>
@@ -4631,8 +4640,8 @@ function renderLibrarySections(scenario){
       html+=`<div class="lib-item-row">
         <input type="checkbox" class="lib-item-check" id="libchk-${item.id}" checked>
         <div class="lib-item-text">
-          <div class="lib-item-name">${item.name}</div>
-          <div class="lib-item-desc">${item.desc}</div>
+          <div class="lib-item-name">${esc(item.name)}</div>
+          <div class="lib-item-desc">${esc(item.desc)}</div>
           ${item.reg?`<div class="lib-item-reg">${item.reg}</div>`:''}
         </div>
       </div>`;
@@ -4675,13 +4684,13 @@ function addLibrarySection(scenarioId, sectionId){
         added++;
       }
     });
-    showToast(added>0?`✓ Added ${added} item${added>1?'s':''} to "${t.name}"`:'All selected items already in checklist','info');
+    showToast(added>0?`✓ Added ${added} item${added>1?'s':''} to "${esc(t.name)}"`:'All selected items already in checklist','info');
   } else {
     t.sections.push({
       id:sec.id, name:sec.name,
       items:selectedItems.map(i=>({id:i.id,name:i.name,desc:i.desc}))
     });
-    showToast(`✓ "${sec.name}" added to "${t.name}"`);
+    showToast(`✓ "${esc(sec.name)}" added to "${esc(t.name)}"`);
   }
   saveData(); renderMyChecklist(); _syncEditingToActiveDraft();
   renderLibrarySections(scenario); // refresh badges
@@ -4692,22 +4701,22 @@ function useScenario(scenarioId){
   const t=_editingType(); if(!t){ showToast('No inspection type being edited.','error'); return; }
   const cur=t.sections?.length||0;
   const msg = cur
-    ? `Replace contents of "${t.name}"?\n\nThis will REPLACE the current ${cur} section${cur!==1?'s':''} with the ${scenario.sections.length} section${scenario.sections.length!==1?'s':''} from "${scenario.name}".\n\nAlready submitted inspections are not affected.`
-    : `Load "${scenario.name}" into "${t.name}"?`;
+    ? `Replace contents of "${esc(t.name)}"?\n\nThis will REPLACE the current ${cur} section${cur!==1?'s':''} with the ${scenario.sections.length} section${scenario.sections.length!==1?'s':''} from "${esc(scenario.name)}".\n\nAlready submitted inspections are not affected.`
+    : `Load "${esc(scenario.name)}" into "${esc(t.name)}"?`;
   if(!confirm(msg)) return;
   t.sections = scenario.sections.map(sec=>({
     id: sec.id, name: sec.name,
     items: sec.items.map(i=>({id:i.id, name:i.name, desc:i.desc||''}))
   }));
   saveData(); renderMyChecklist(); _syncEditingToActiveDraft();
-  showToast(`✓ "${t.name}" replaced with "${scenario.name}"`);
+  showToast(`✓ "${esc(t.name)}" replaced with "${esc(scenario.name)}"`);
   switchSetupPane('my-checklist');
 }
 
 function addAllLibrarySections(){
   const scenario=LIBRARY.find(s=>s.id===_activeScenario); if(!scenario) return;
   const t=_editingType(); if(!t){ showToast('No inspection type being edited.','error'); return; }
-  if(!confirm(`Add all ${scenario.sections.length} sections from "${scenario.name}" to "${t.name}"?\n\nExisting sections will have any new items merged in.`)) return;
+  if(!confirm(`Add all ${scenario.sections.length} sections from "${esc(scenario.name)}" to "${esc(t.name)}"?\n\nExisting sections will have any new items merged in.`)) return;
   if(!Array.isArray(t.sections)) t.sections=[];
   let added=0;
   scenario.sections.forEach(sec=>{
@@ -4723,7 +4732,7 @@ function addAllLibrarySections(){
   });
   saveData(); renderMyChecklist(); _syncEditingToActiveDraft();
   renderLibrarySections(scenario);
-  showToast(`✓ ${added} item${added!==1?'s':''} added to "${t.name}"`);
+  showToast(`✓ ${added} item${added!==1?'s':''} added to "${esc(t.name)}"`);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4742,7 +4751,7 @@ function renderTemplates(){
     const itemCount=t.checklist?.reduce((n,s)=>n+(s.items?.length||0),0)||0;
     div.innerHTML=`
       <div class="tmpl-info">
-        <div class="tmpl-name">${t.name}</div>
+        <div class="tmpl-name">${esc(t.name)}</div>
         <div class="tmpl-meta">${t.client?`Client: ${t.client} · `:''} ${sectionCount} sections · ${itemCount} items · Saved ${fmtDate(t.savedAt?.slice(0,10))}</div>
         ${t.description?`<div style="font-size:13px;color:var(--text-muted);margin-top:4px;">${t.description}</div>`:''}
       </div>
@@ -4795,10 +4804,10 @@ function saveTemplate(){
 function loadTemplate(id){
   const tpl=S.templates?.find(x=>x.id===id); if(!tpl) return;
   const t=_editingType(); if(!t){ showToast('No inspection type being edited.','error'); return; }
-  if(!confirm(`Load template "${tpl.name}" into "${t.name}"?\n\nThis will replace the current contents of this type. Already submitted inspections are not affected.`)) return;
+  if(!confirm(`Load template "${esc(tpl.name)}" into "${esc(t.name)}"?\n\nThis will replace the current contents of this type. Already submitted inspections are not affected.`)) return;
   t.sections=JSON.parse(JSON.stringify(tpl.checklist));
   saveData(); renderMyChecklist(); _syncEditingToActiveDraft();
-  showToast(`✓ Loaded template "${tpl.name}" into "${t.name}"`);
+  showToast(`✓ Loaded template "${esc(tpl.name)}" into "${esc(t.name)}"`);
   switchSetupPane('my-checklist');
 }
 
@@ -4820,7 +4829,7 @@ function openAddSection(){
 function openEditSection(secId){
   const sec=_editingSections().find(s=>s.id===secId); _ctx={secId};
   openModal('Rename Section',
-    `<div class="field-group"><label class="field-label">Section Name</label><input type="text" id="mSecName" value="${sec.name}"></div>`,
+    `<div class="field-group"><label class="field-label">Section Name</label><input type="text" id="mSecName" value="${esc(sec.name)}"></div>`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveSection('${secId}')">Save</button>`
   );
 }
@@ -4854,8 +4863,8 @@ function openEditItem(secId,itemId){
   const sec=_editingSections().find(s=>s.id===secId); const item=sec?.items.find(i=>i.id===itemId); if(!item) return;
   openModal('Edit Item',
     `<div style="display:flex;flex-direction:column;gap:12px;">
-       <div class="field-group"><label class="field-label">Item Name</label><input type="text" id="mItemName" value="${item.name}"></div>
-       <div class="field-group"><label class="field-label">Description / Guidance</label><textarea id="mItemDesc" rows="3">${item.desc}</textarea></div>
+       <div class="field-group"><label class="field-label">Item Name</label><input type="text" id="mItemName" value="${esc(item.name)}"></div>
+       <div class="field-group"><label class="field-label">Description / Guidance</label><textarea id="mItemDesc" rows="3">${esc(item.desc)}</textarea></div>
      </div>`,
     `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveItem()">Save Item</button>`
   );
@@ -4878,13 +4887,13 @@ function deleteItem(secId,itemId){
 function resetToDefaults(){
   const t = _editingType(); if(!t) return;
   if(_isCustomType(_editingTypeId)){
-    if(!confirm(`Reset "${t.name}" to empty? All sections will be removed.`)) return;
+    if(!confirm(`Reset "${esc(t.name)}" to empty? All sections will be removed.`)) return;
     t.sections = [];
   } else {
     // Built-in type: reset to its LIBRARY default
     const lib = LIBRARY.find(l => l.id === _editingTypeId);
     if(!lib){ showToast('No default available for this type.','error'); return; }
-    if(!confirm(`Reset "${t.name}" to its built-in default? All customisations to this type will be removed.`)) return;
+    if(!confirm(`Reset "${esc(t.name)}" to its built-in default? All customisations to this type will be removed.`)) return;
     t.sections = lib.sections.map(s => ({
       id: s.id, name: s.name,
       items: s.items.map(i => ({ id:i.id, name:i.name, desc:i.desc||'', ...(i.input?{input:i.input}:{}), ...(i.options?{options:i.options.slice()}:{}), ...(i.columns?{columns:i.columns.slice()}:{}) }))
@@ -5322,7 +5331,7 @@ async function handleLoginSubmit(event){
     const user = await Auth.login(email, password);
     closeLoginModal();
     _updateAuthIndicator();
-    showToast(`✓ Signed in as ${user.email}`, 'success');
+    showToast(`✓ Signed in as ${esc(user.email)}`, 'success');
     // Load server state
     await loadFromServerAndRender();
   } catch(err){
@@ -5437,12 +5446,12 @@ function renderAdminTenants(tenants){
           return `
           <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};">
             <td style="padding:8px 12px;font-family:'DM Mono',monospace;font-size:12px;">${t.id}</td>
-            <td style="padding:8px 12px;font-weight:600;">${t.name}</td>
+            <td style="padding:8px 12px;font-weight:600;">${esc(t.name)}</td>
             <td style="padding:8px 12px;text-align:center;">${t.user_count || 0}</td>
             <td style="padding:8px 12px;color:var(--text-muted);font-size:12px;">${t.last_state_update ? fmtDate(t.last_state_update.slice(0,10)) : '—'}</td>
             <td style="padding:8px 12px;text-align:right;white-space:nowrap;">
-              <button class="btn btn-outline btn-xs" onclick="renameTenant('${t.id}','${tname}')">✏️ Rename</button>
-              <button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="deleteTenant('${t.id}','${tname}',${t.user_count||0})">🗑 Delete</button>
+              <button class="btn btn-outline btn-xs" onclick="renameTenant('${t.id}','${esc(tname)}')">✏️ Rename</button>
+              <button class="btn btn-outline btn-xs" style="border-color:var(--danger);color:var(--danger);" onclick="deleteTenant('${t.id}','${esc(tname)}',${t.user_count||0})">🗑 Delete</button>
             </td>
           </tr>`;
         }).join('')}
@@ -5496,7 +5505,7 @@ function renderAdminUsers(users, tenants){
           return `
           <tr style="border-top:1px solid var(--border);background:${i%2?'transparent':'var(--muted-bg)'};${active?'':'opacity:.55;'}">
             <td style="padding:8px 12px;">
-              <div style="font-weight:600;">${u.email}</div>
+              <div style="font-weight:600;">${esc(u.email)}</div>
               ${u.display_name ? `<div style="font-size:11px;color:var(--text-muted);">${u.display_name}</div>` : ''}
             </td>
             <td style="padding:8px 12px;">${roleLabel}</td>
@@ -5542,7 +5551,7 @@ function openEditUserModal(userId){
   if(!u){ showToast('User not found','error'); return; }
   const isConsultant = u.role === 'consultant';
   const tenantOptions = (_adminTenantsCache||[])
-    .map(t => `<option value="${t.id}" ${t.id===u.tenant_id?'selected':''}>${t.name}</option>`).join('');
+    .map(t => `<option value="${t.id}" ${t.id===u.tenant_id?'selected':''}>${esc(t.name)}</option>`).join('');
   openModal('Edit user',
     `<div style="display:flex;flex-direction:column;gap:12px;">
        <div class="field-group">
@@ -5758,7 +5767,7 @@ async function openAddUserModal(){
     const r = await fetch('/api/admin/tenants', { credentials: 'include' }).then(r => r.json());
     tenants = r.tenants || [];
   } catch(e){ /* leave empty */ }
-  const tenantOptions = tenants.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  const tenantOptions = tenants.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
 
   openModal('Add User (Login)',
     `<div style="display:flex;flex-direction:column;gap:12px;">
@@ -5832,7 +5841,7 @@ async function submitAddUser(){
            <div style="font-size:13px;color:var(--success);margin-bottom:10px;">User account created. <strong>Send these credentials to them now</strong> — the password won't be shown again.</div>
            <div style="font-family:'DM Mono',monospace;font-size:13px;background:#fff;padding:10px 12px;border-radius:6px;border:1px solid var(--success-brd);">
              <div style="margin-bottom:4px;"><strong>URL:</strong> https://inspections.archerhs.co.uk</div>
-             <div style="margin-bottom:4px;"><strong>Email:</strong> ${email}</div>
+             <div style="margin-bottom:4px;"><strong>Email:</strong> ${esc(email)}</div>
              <div><strong>Password:</strong> ${password}</div>
            </div>
          </div>
@@ -5887,7 +5896,7 @@ async function submitResetPassword(userId, email){
       `<div style="padding:14px 16px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:8px;">
          <div style="font-size:13px;color:var(--success);margin-bottom:10px;">Password reset successfully. <strong>Send these to them:</strong></div>
          <div style="font-family:'DM Mono',monospace;font-size:13px;background:#fff;padding:10px 12px;border-radius:6px;border:1px solid var(--success-brd);">
-           <div style="margin-bottom:4px;"><strong>Email:</strong> ${email}</div>
+           <div style="margin-bottom:4px;"><strong>Email:</strong> ${esc(email)}</div>
            <div><strong>New password:</strong> ${password}</div>
          </div>
        </div>`,
@@ -5993,7 +6002,7 @@ function openChangeMyPasswordModal(){
   if(!user) return;
   openModal(`Change your password`,
     `<div style="display:flex;flex-direction:column;gap:12px;">
-       <div style="font-size:13px;color:var(--text-muted);">Signed in as <strong>${user.email}</strong></div>
+       <div style="font-size:13px;color:var(--text-muted);">Signed in as <strong>${esc(user.email)}</strong></div>
        <div class="field-group">
          <label class="field-label">Current password</label>
          <input type="password" id="mCurrentPwd" autocomplete="current-password" autofocus>
@@ -8331,7 +8340,7 @@ function drilldown(type) {
         const a=Object.values(results).filter(r=>r==='action').length;
         html+=`<div class="drilldown-item" style="background:var(--muted-bg);border:1px solid var(--border);flex-direction:column;gap:4px;">
           <div style="font-weight:700;font-size:14px;">${insp.title||fmtPeriod(insp)}</div>
-          <div style="font-size:12px;color:var(--text-muted);">📍 ${insp.location} · 👤 ${insp.manager} · 📅 ${fmtPeriod(insp)}</div>
+          <div style="font-size:12px;color:var(--text-muted);">📍 ${esc(insp.location)} · 👤 ${esc(insp.manager)} · 📅 ${fmtPeriod(insp)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
             <span style="font-size:11px;font-weight:700;color:var(--success);">✓ ${p} Pass</span>
             ${rc?`<span style="font-size:11px;font-weight:700;color:#065f46;">✔ ${rc} Rectified</span>`:''}
@@ -8362,7 +8371,7 @@ function drilldown(type) {
         rows.forEach(({item,sec})=>{
           html+=`<div class="drilldown-item drilldown-item-pass">
             <span style="color:var(--success);font-size:15px;flex-shrink:0;">✓</span>
-            <div><div style="font-weight:600;">${item.name}</div><div style="font-size:11px;color:var(--text-muted);">${sec.name}</div></div>
+            <div><div style="font-weight:600;">${esc(item.name)}</div><div style="font-size:11px;color:var(--text-muted);">${esc(sec.name)}</div></div>
           </div>`;
         });
         html+=`</div>`;
@@ -8391,7 +8400,7 @@ function drilldown(type) {
         html+=`<div class="drilldown-group"><div class="drilldown-group-title">📋 ${insp.title||fmtDate(insp.periodTo)}</div>`;
         rows.forEach(({item,sec,rd})=>{
           html+=`<div class="drilldown-item drilldown-item-rect" style="flex-direction:column;gap:3px;">
-            <div style="display:flex;align-items:center;gap:8px;"><span style="color:#065f46;font-size:15px;">✔</span><span style="font-weight:600;">${item.name}</span><span style="font-size:11px;color:var(--text-muted);">${sec.name}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;"><span style="color:#065f46;font-size:15px;">✔</span><span style="font-weight:600;">${esc(item.name)}</span><span style="font-size:11px;color:var(--text-muted);">${esc(sec.name)}</span></div>
             ${rd.note?`<div style="font-size:12px;color:#065f46;padding-left:23px;">${rd.note}</div>`:''}
             ${rd.by?`<div style="font-size:11px;color:#059669;padding-left:23px;">By: ${rd.by}</div>`:''}
           </div>`;
