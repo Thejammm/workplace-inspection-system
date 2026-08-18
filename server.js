@@ -52,6 +52,7 @@ app.get('/api/time', (_req, res) => {
 app.use('/api/auth',  authRoutes);
 app.use('/api/state', stateRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/link',  require('./routes/link'));   // service-token read for linked apps (Compass)
 
 // 404 for any unknown /api/* path (don't fall through to the SPA)
 app.use('/api', (_req, res) => {
