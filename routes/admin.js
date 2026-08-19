@@ -79,18 +79,43 @@ router.patch('/tenants/:id', async (req, res) => {
 });
 
 // DELETE /api/admin/tenants/:id — fails if any users still belong to it
+// DELETE /api/admin/tenants/:id[?cascade=1]
+// Without cascade: refuses while the tenant still has users (old behaviour).
+// With cascade=1: ONE transaction deletes the tenant's client_user logins,
+// their saved state and the tenant itself — the one-dialog delete the admin
+// UI offers. Consultants are never tenant-bound, so cascade can only ever
+// remove client logins; anything unexpected still 409s and rolls back.
 router.delete('/tenants/:id', async (req, res) => {
   const id = req.params.id;
+  const cascade = String(req.query?.cascade || '') === '1';
   try {
     const u = await pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE tenant_id = $1`, [id]);
-    if(u.rows[0].n > 0){
+    if(u.rows[0].n > 0 && !cascade){
       return res.status(409).json({ error: 'tenant_has_users', count: u.rows[0].n });
     }
-    // Cascade-delete the tenant's saved app_state if any
-    await pool.query(`DELETE FROM app_state WHERE tenant_id = $1`, [id]);
-    const r = await pool.query(`DELETE FROM tenants WHERE id = $1`, [id]);
-    if(r.rowCount === 0){ return res.status(404).json({ error: 'tenant_not_found' }); }
-    res.json({ ok: true });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const del  = await client.query(`DELETE FROM users WHERE tenant_id = $1 AND role = 'client_user'`, [id]);
+      const left = await client.query(`SELECT COUNT(*)::int AS n FROM users WHERE tenant_id = $1`, [id]);
+      if(left.rows[0].n > 0){
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'tenant_has_non_client_users', count: left.rows[0].n });
+      }
+      await client.query(`DELETE FROM app_state WHERE tenant_id = $1`, [id]);
+      const r = await client.query(`DELETE FROM tenants WHERE id = $1`, [id]);
+      if(r.rowCount === 0){
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'tenant_not_found' });
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true, usersDeleted: del.rowCount });
+    } catch(e){
+      try { await client.query('ROLLBACK'); } catch(_){}
+      throw e;
+    } finally {
+      client.release();
+    }
   } catch(err){
     console.error('DELETE /tenants/:id error:', err);
     res.status(500).json({ error: 'server_error' });

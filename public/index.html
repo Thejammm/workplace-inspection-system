@@ -5970,29 +5970,79 @@ async function renameTenant(tenantId, currentName){
 }
 
 // ── Delete a tenant (only if it has zero users) ──
-async function deleteTenant(tenantId, name, userCount){
-  if(userCount > 0){
-    showToast(`Remove the ${userCount} user${userCount>1?'s':''} from "${name}" before deleting the tenant.`,'error');
-    return;
-  }
-  if(!confirm(`Permanently delete the tenant "${name}" (id: ${tenantId})?\n\nAny stored inspection data for this tenant will also be deleted. This cannot be undone.`)) return;
+// One-dialog client deletion: users, stored data and the tenant go together
+// (server cascade, one transaction). Typed-name confirmation replaces the
+// old blocker that demanded users be removed one by one first, and a backup
+// button captures everything as JSON before it goes.
+var _delTenantPending = null;
+function deleteTenant(tenantId, name, userCount){
+  _delTenantPending = { id: tenantId, name: (name || tenantId) };
+  const n = _delTenantPending.name;
+  openModal('Delete client — ' + esc(n), `
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div style="font-size:13px;line-height:1.55;">This permanently deletes:
+        <ul style="margin:6px 0 0 18px;">
+          ${userCount > 0 ? `<li><strong>${userCount} login${userCount>1?'s':''}</strong> for this client</li>` : ''}
+          <li>All stored inspection data for <strong>${esc(n)}</strong></li>
+          <li>The client itself (id: ${esc(tenantId)})</li>
+        </ul>
+      </div>
+      <div style="font-size:12.5px;color:var(--text-muted);">This cannot be undone. If in doubt, download a backup first — one JSON file holding everything this client has saved.</div>
+      <button class="btn btn-outline btn-sm" onclick="downloadTenantBackup()">⭳ Download data backup (JSON)</button>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Type the client name to confirm:&nbsp;<span style="font-weight:400;color:var(--text-muted);">${esc(n)}</span></label>
+        <input type="text" id="delTenantConfirm" autocomplete="off" style="width:100%;" oninput="_delTenantCheck(this.value)">
+      </div>
+    </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+     <button class="btn" id="delTenantGo" disabled style="background:var(--danger);color:#fff;opacity:.9;" onclick="confirmDeleteTenant()">Delete permanently</button>`);
+}
+function _delTenantCheck(v){
+  const b = document.getElementById('delTenantGo');
+  if(b) b.disabled = !(_delTenantPending && String(v).trim() === _delTenantPending.name.trim());
+}
+async function downloadTenantBackup(){
+  if(!_delTenantPending) return;
+  const { id, name } = _delTenantPending;
   try {
-    const res = await fetch(`/api/admin/tenants/${encodeURIComponent(tenantId)}`, {
+    const r = await fetch(`/api/state?tenantId=${encodeURIComponent(id)}`, { credentials:'include' });
+    const j = await r.json();
+    if(!r.ok){ showToast('Backup failed: ' + (j.error || r.status), 'error'); return; }
+    const payload = { meta:{ kind:'ahs-tenant-backup', tenantId:id, name, exportedAt:new Date().toISOString(), appKey:'ahs:workplace-inspection:v3' }, S: j.state || null };
+    const blob = new Blob([JSON.stringify(payload, null, 1)], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'backup-' + id + '-' + new Date().toISOString().slice(0,10) + '.json';
+    a.click(); URL.revokeObjectURL(a.href);
+    showToast('✓ Backup downloaded' + (j.state ? '' : ' (this client had no saved data)'), 'success');
+  } catch(e){ showToast('Backup failed — network error.', 'error'); }
+}
+async function confirmDeleteTenant(){
+  if(!_delTenantPending) return;
+  const { id, name } = _delTenantPending;
+  const btn = document.getElementById('delTenantGo');
+  if(btn){ btn.disabled = true; btn.textContent = 'Deleting…'; }
+  try {
+    const res = await fetch(`/api/admin/tenants/${encodeURIComponent(id)}?cascade=1`, {
       method: 'DELETE', credentials: 'include'
     });
+    const body = await res.json().catch(()=>({}));
     if(!res.ok){
-      const body = await res.json().catch(()=>({}));
-      const msg = body.error === 'tenant_has_users'  ? `Tenant still has ${body.count} user(s) — remove them first.`
-                : body.error === 'tenant_not_found'  ? 'Tenant no longer exists.'
-                : `Failed: ${body.error||res.status}`;
+      const msg = body.error === 'tenant_has_non_client_users' ? `Blocked: ${body.count} non-client login(s) are attached to this tenant.`
+                : body.error === 'tenant_not_found'            ? 'Client no longer exists.'
+                : `Failed: ${body.error || res.status}`;
       showToast(msg, 'error');
+      if(btn){ btn.disabled = false; btn.textContent = 'Delete permanently'; }
       return;
     }
-    showToast(`✓ Tenant "${name}" deleted`, 'success');
+    closeModal();
+    _delTenantPending = null;
+    showToast(`✓ "${name}" deleted${body.usersDeleted ? ' (' + body.usersDeleted + ' login' + (body.usersDeleted !== 1 ? 's' : '') + ' removed)' : ''}`, 'success');
     renderAdminPane();
   } catch(err){
     console.error(err);
-    showToast('Network error deleting tenant','error');
+    showToast('Network error deleting the client','error');
+    if(btn){ btn.disabled = false; btn.textContent = 'Delete permanently'; }
   }
 }
 
