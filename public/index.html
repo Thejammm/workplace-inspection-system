@@ -5539,7 +5539,11 @@ async function loadFromServerAndRender(){
     if(localUsable){
       const localS = S;
       const m = mergeAppState(localS, serverState);
-      if(localS.draft) m.state.draft = localS.draft;   // the in-progress draft belongs to this device
+      // The in-progress inspection belongs to this device: its draft AND the
+      // checklist it is being answered against travel together. Taking the
+      // draft from here but the checklist from the server left e.g. an MOT Q/C
+      // draft validated against another device's Garage walkround.
+      if(localS.draft){ m.state.draft = localS.draft; m.state.checklist = localS.checklist; }
       S = m.state;
       pushUp = m.fromBase;
     } else {
@@ -6593,6 +6597,27 @@ function migrateLoadedState(){
       }
     });
   }
+  _alignChecklistToDraft();
+}
+
+// The active checklist must be the one for the draft's inspection type. A sync
+// bug (fixed 2026-09-29) could leave e.g. an MOT Q/C draft paired with another
+// device's Garage walkround, so submit demanded 95 items that weren't on the
+// MOT screen. If any item in the active checklist doesn't belong to the draft's
+// type, reload the checklist from the type. Answers already given are kept
+// (they're keyed by item id).
+function _alignChecklistToDraft(){
+  const t = S.inspectionTypes?.[S.draft?.typeId];
+  if(!t) return false;
+  if(t.kind === 'form'){
+    if(Array.isArray(S.checklist) && S.checklist.length){ S.checklist = []; return true; }
+    return false;
+  }
+  const typeIds = new Set((t.sections||[]).flatMap(s => (s.items||[]).map(i => i.id)));
+  const curIds  = (S.checklist||[]).flatMap(s => (s.items||[]).map(i => i.id));
+  if(curIds.length && curIds.every(id => typeIds.has(id))) return false;
+  S.checklist = JSON.parse(JSON.stringify(t.sections||[]));
+  return true;
 }
 
 function saveAs(){
