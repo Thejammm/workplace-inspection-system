@@ -178,7 +178,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 .resolve-panel{margin-top:12px;padding:14px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:8px;}
 .rp-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--success);margin-bottom:10px;}
 .assign-panel{margin-top:12px;padding:14px;background:var(--accent-light);border:1.5px solid var(--accent);border-radius:8px;}
-.ap-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent-dark);margin-bottom:10px;}
+.asg-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent-dark);margin-bottom:10px;}
 .action-card.assigned{border-left-color:var(--accent);}
 .assigned-line{font-size:13px;margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .reassign-btn{font-size:11px;font-weight:600;color:var(--accent-dark);background:transparent;border:1px solid var(--accent);border-radius:5px;padding:3px 8px;cursor:pointer;}
@@ -532,7 +532,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       <button class="btn btn-ghost btn-sm no-print" id="signOutBtn" onclick="handleSignOut()" title="Sign out — switches back to local-only mode" style="color:var(--text-muted);border-color:var(--border);display:none;">Sign out</button>
       <!-- Save Folder button removed: PDFs now go straight to the browser's Downloads folder. -->
       <!-- <button class="btn btn-ghost btn-sm no-print" onclick="changeSaveFolder()" ...>📁 Save Folder</button> -->
-      <button class="btn btn-ghost btn-sm no-print" onclick="resetAppData()" title="Clear all data and start fresh — useful for testing" style="color:var(--text-muted);border-color:var(--border);">🔄 Reset</button>
+      <!-- Reset moved to Checklist Builder → Danger zone (consultant only). -->
       <!-- Save As button removed: server-stored data makes this redundant AND it could let users download the whole app. -->
       <!-- <button class="btn btn-outline btn-sm no-print" onclick="saveAs()">💾 Save As</button> -->
       <!-- Ctrl+S keyboard shortcut for saveAs() is disabled below too -->
@@ -1193,6 +1193,17 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       </div>
     </div>
 
+    <!-- ── Danger zone: full app reset (consultant only) ── -->
+    <div id="builderResetZone" class="no-print" style="display:none;margin-top:28px;padding:14px 16px;border:1.5px solid var(--danger-brd);background:var(--danger-bg);border-radius:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--danger);">Danger zone</div>
+          <div style="font-size:13px;color:var(--text);margin-top:4px;">Reset clears every inspection, action, audit record, template and branding for this workplace — on this device <strong>and on the server</strong>. It cannot be undone.</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="resetAppData()">🔄 Reset app data</button>
+      </div>
+    </div>
+
     </div> <!-- /consultantContent -->
   </div> <!-- /tab-setup -->
 
@@ -1241,7 +1252,18 @@ const CONSULTANT_PASS = 'archer';
 
 let _consultantUnlocked = false;
 
+// Only the consultant may reset: either signed in with the consultant role, or
+// unlocked with the consultant passphrase. Client users never see the button.
+function _canResetApp(){
+  return _consultantUnlocked || (typeof Auth !== 'undefined' && Auth.user()?.role === 'consultant');
+}
+function _updateResetVisibility(){
+  const z = document.getElementById('builderResetZone');
+  if(z) z.style.display = _canResetApp() ? 'block' : 'none';
+}
+
 function showSetupTab() {
+  _updateResetVisibility();
   const selector = document.getElementById('clientSelector');
   const content  = document.getElementById('consultantContent');
 
@@ -1351,6 +1373,7 @@ function checkGate() {
 
   if (entry === CONSULTANT_PASS.toLowerCase()) {
     _consultantUnlocked = true;
+    _updateResetVisibility();
     document.getElementById('clientSelector').style.display    = 'none';
     document.getElementById('consultantContent').style.display = 'block';
     document.getElementById('consultantPassRow').classList.remove('open');
@@ -1940,6 +1963,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(saveData, 30000);
   // Keep the server-clock offset fresh on long-open sessions so stamps don't drift.
   setInterval(syncServerTime, 5 * 60 * 1000);
+  // Pick up records saved from other devices (manager's tab sees new actions,
+  // assignee sees new assignments) — every minute and on returning to the app.
+  setInterval(_pullServerUpdates, 60 * 1000);
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible') _pullServerUpdates();
+    else saveData();   // app going to background — push anything pending now
+  });
+  // Desktop: warn before closing while a server save is still in flight.
+  window.addEventListener('beforeunload', e => {
+    if(_serverSaving){ e.preventDefault(); e.returnValue = ''; }
+  });
 });
 // Ctrl+S shortcut removed — saveAs() would let users download the whole app HTML with embedded data.
 // document.addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();saveAs();} });
@@ -2755,8 +2789,6 @@ function renderChecklist() {
               <div class="field-grid" style="margin-bottom:10px;">
                 <div class="field-group span-2"><label class="field-label">Describe the issue precisely</label>
                   <textarea id="adi-${item.id}" rows="2" placeholder="What specifically is wrong? Location, extent, context." oninput="cacheAD('${item.id}')">${itAd.issue||''}</textarea></div>
-                <div class="field-group"><label class="field-label">Action taken / assigned to</label>
-                  <input type="text" id="ada-${item.id}" placeholder="Fixed by [name] / Assigned to [name]" value="${esc(itAd.assignedTo||'')}" oninput="cacheAD('${item.id}')"></div>
                 <div class="field-group"><label class="field-label">Target date</label>
                   <input type="date" id="add-${item.id}" value="${itAd.dueDate||''}" onchange="cacheAD('${item.id}')"></div>
                 <div class="field-group span-2">
@@ -3009,7 +3041,6 @@ function cacheAD(itemId) {
   const existing = S.draft.actionDetails[itemId]||{};
   S.draft.actionDetails[itemId]={
     issue:      document.getElementById('adi-'+itemId)?.value||'',
-    assignedTo: document.getElementById('ada-'+itemId)?.value||'',
     dueDate:    document.getElementById('add-'+itemId)?.value||'',
     beforePhotos: existing.beforePhotos||[]
   };
@@ -3175,7 +3206,8 @@ function submitInspection() {
             inspId:insp.id, periodTo:d.periodTo, location:d.location, manager:d.manager,
             sectionName:section.name, itemId:item.id, itemName:item.name,
             issue:itAd.issue||item.desc, note:d.notes[item.id]||'',
-            assignedTo:itAd.assignedTo||'', dueDate:itAd.dueDate||'',
+            // Assignment is the manager's step in the Actions tab — never set at inspection.
+            assignedTo:'', dueDate:itAd.dueDate||'',
             beforePhotos:itAd.beforePhotos||[],
             resolved:false, resolvedBy:'', resolvedAt:'', resolvedNote:'', afterPhotos:[]
           });
@@ -3480,7 +3512,7 @@ function renderActions() {
           <strong>Resolution:</strong> ${esc(a.resolvedNote||'(no notes recorded)')}
         </div>`:st==='raised'?`
         <div class="assign-panel">
-          <div class="ap-label">① Assign — manager step</div>
+          <div class="asg-label">① Assign — manager step</div>
           <div class="field-grid" style="margin-bottom:10px;">
             <div class="field-group"><label class="field-label">Assign to</label><input type="text" id="asg-${a.id}" placeholder="Name of person responsible" value="${esc(a.assignedTo||'')}"></div>
             <div class="field-group"><label class="field-label">Due date</label><input type="date" id="asgd-${a.id}" value="${esc(a.dueDate||'')}"></div>
@@ -3493,7 +3525,7 @@ function renderActions() {
         </div>
         <div id="reassign-${a.id}" style="display:none;">
           <div class="assign-panel">
-            <div class="ap-label">↻ Update assignment</div>
+            <div class="asg-label">↻ Update assignment</div>
             <div class="field-grid" style="margin-bottom:10px;">
               <div class="field-group"><label class="field-label">Assign to</label><input type="text" id="asg-${a.id}" placeholder="Name of person responsible" value="${esc(a.assignedTo||'')}"></div>
               <div class="field-group"><label class="field-label">Due date</label><input type="date" id="asgd-${a.id}" value="${esc(a.dueDate||'')}"></div>
@@ -3532,6 +3564,9 @@ function deleteAction(id){
   if(!a) return;
   if(!confirm(`Remove this action?\n\n"${esc(a.itemName)}"\n\nThis deletes the action item itself; the inspection it came from is not changed. This cannot be undone.`)) return;
   S.actions = S.actions.filter(x => x.id !== id);
+  // Remember the delete so another device still holding it can't bring it back.
+  S._deleted = S._deleted || {};
+  (S._deleted.actions = S._deleted.actions || {})[id] = serverNow().getTime();
   saveData(); updateBadge();
   renderActions(); renderActionStats();
   if(typeof renderMonthlyReport === 'function'){ try { renderMonthlyReport(); } catch(e){} }
@@ -5289,61 +5324,228 @@ function flushDraft(){
   // rectifyDetails cached live via cacheRD — no flush needed
 }
 
+// ══════════════════════════════════════════════════════════════
+//  MULTI-DEVICE SYNC
+//  ─────────────────────────────────────────────────────────────
+//  Several people use one workplace's data from different devices (employee
+//  on a phone, manager on a desktop, assignee on another phone). Each save
+//  posts the whole state, and the server MERGES it (routes/state.js) rather
+//  than overwriting — otherwise a device with an older copy wiped records
+//  another device had just saved (the "nothing reaches the Archive" bug).
+//
+//  • Each inspection/action carries _u — when it was last changed. It's
+//    stamped automatically at save time by comparing a fingerprint of the
+//    record with the one from the last save/load, so no edit path can forget.
+//  • Deletes go in S._deleted so another device can't resurrect them.
+//  • Unchanged state isn't re-uploaded; open tabs poll a cheap version check
+//    and fold in other devices' records without disturbing the screen.
+// ══════════════════════════════════════════════════════════════
+const _REC_KEYS = ['inspections','actions'];
+let _forceReplaceNext   = false;     // next server save overwrites (Reset only)
+let _lastServerStateStr = null;      // S as last confirmed on the server
+let _serverUpdatedAt    = null;      // server's updatedAt as last seen here
+let _localMetaTenant    = null;      // tenant the local cache was saved under
+let _serverSaving       = false;     // a server save is in flight
+let _recFp = new Map();              // record id → content fingerprint
+
+// Combine two copies of the state. KEEP IDENTICAL to lib/mergeState.js.
+function mergeAppState(base, incoming){
+  if(!base || typeof base !== 'object') return { state: incoming, fromBase: false };
+  if(!incoming || typeof incoming !== 'object') return { state: base, fromBase: true };
+  const out = Object.assign({}, base, incoming);
+  let fromBase = false;
+  const deleted = {};
+  _REC_KEYS.forEach(k => {
+    const bd = (base._deleted && base._deleted[k]) || {};
+    const id = (incoming._deleted && incoming._deleted[k]) || {};
+    deleted[k] = Object.assign({}, bd, id);
+    if(Object.keys(bd).some(x => !(x in id))) fromBase = true;
+  });
+  out._deleted = deleted;
+  _REC_KEYS.forEach(k => {
+    const map = new Map();
+    (Array.isArray(base[k]) ? base[k] : []).forEach(r => { if(r && r.id) map.set(r.id, r); });
+    const inIds = new Set();
+    (Array.isArray(incoming[k]) ? incoming[k] : []).forEach(r => {
+      if(!r || !r.id) return;
+      inIds.add(r.id);
+      const cur = map.get(r.id);
+      if(!cur || (r._u || 0) >= (cur._u || 0)) map.set(r.id, r);
+      else fromBase = true;                       // base holds a newer edit
+    });
+    const list = [];
+    map.forEach((r, rid) => {
+      if(deleted[k][rid]) return;
+      if(!inIds.has(rid)) fromBase = true;        // only base knows this record
+      list.push(r);
+    });
+    out[k] = list;
+  });
+  return { state: out, fromBase };
+}
+
+function _hhmm(){ return new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
+function _recHash(r){
+  const s = JSON.stringify(r, (k, v) => k === '_u' ? undefined : v);
+  let h = 0x811c9dc5;
+  for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36) + ':' + s.length;
+}
+// Stamp _u on every record whose content changed since the last save/load.
+function _stampChangedRecords(){
+  const now = serverNow().getTime();
+  _REC_KEYS.forEach(k => (S[k] || []).forEach(r => {
+    if(!r || !r.id) return;
+    const h = _recHash(r), prev = _recFp.get(r.id);
+    if(prev === h) return;
+    if(prev !== undefined || !r._u) r._u = now;
+    _recFp.set(r.id, h);
+  }));
+}
+function _resetRecordFingerprints(){
+  _recFp = new Map();
+  _REC_KEYS.forEach(k => (S[k] || []).forEach(r => { if(r && r.id) _recFp.set(r.id, _recHash(r)); }));
+}
+
+// Fold in records other devices saved, keeping anything newer on this device.
+// Only inspections/actions/deletes are adopted — the draft and settings stay
+// as they are here. Returns true if anything new arrived.
+function _adoptServerState(serverState){
+  if(!serverState || typeof serverState !== 'object') return false;
+  const cleanBefore = _lastServerStateStr !== null && JSON.stringify(S) === _lastServerStateStr;
+  const { state: merged, fromBase } = mergeAppState(serverState, S);
+  if(!fromBase) return false;          // server had nothing we lacked
+  const mine = new Set();
+  _REC_KEYS.forEach(k => (S[k] || []).forEach(r => mine.add(r)));
+  _REC_KEYS.forEach(k => {
+    S[k] = merged[k];
+    S[k].forEach(r => { if(!mine.has(r) && r && r.id) _recFp.set(r.id, _recHash(r)); });
+  });
+  S._deleted = merged._deleted;
+  if(cleanBefore) _lastServerStateStr = JSON.stringify(S);
+  try{ localStorage.setItem('ahs:workplace-inspection:v3',
+    `{"meta":${JSON.stringify({version:3,savedAt:new Date().toISOString(),appKey:'ahs:workplace-inspection:v3',tenantId:Auth.activeTenantId()||null})},"S":${JSON.stringify(S)}}`); }catch(e){}
+  _refreshRecordViews();
+  return true;
+}
+
+// Redraw record lists after new records arrive — but never under someone's
+// fingers: skip while a field has focus or holds text not yet submitted.
+function _refreshRecordViews(){
+  try{ updateBadge(); renderActionStats(); renderManagerDashboard(); }catch(e){}
+  const ae = document.activeElement;
+  if(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return;
+  const active = document.querySelector('.tab-btn.active')?.dataset.tab;
+  try{
+    if(active === 'actions'){
+      const cont = document.getElementById('actionsContainer');
+      const dirty = cont && [...cont.querySelectorAll('input,textarea')]
+        .some(el => el.type !== 'file' && el.type !== 'checkbox' && el.value !== el.defaultValue);
+      if(!dirty) renderActions();
+    } else if(active === 'archive'){
+      renderArchive();
+    }
+  }catch(e){}
+}
+
 function saveData(){
   // Consultant read-only view: never write anywhere (not localStorage, not the
   // server). This is the hard guarantee that viewing a client cannot overwrite
   // their data. See the Consultant Audit Mode module below.
   if(_consultantView) return;
   flushDraft();
-  const payload={meta:{version:3,savedAt:new Date().toISOString(),appKey:'ahs:workplace-inspection:v3'},S};
-  // Always write to localStorage as a cache / offline fallback
+  _stampChangedRecords();
+  const sStr   = JSON.stringify(S);
+  const tenant = (Auth.isSignedIn() && Auth.activeTenantId()) || null;
+  const el     = document.getElementById('saveIndicator');
+  // Always write to localStorage as a cache / offline fallback. The tenant is
+  // recorded so a later sign-in only merges this cache into the right tenant.
   try{
-    localStorage.setItem('ahs:workplace-inspection:v3',JSON.stringify(payload));
-    const el=document.getElementById('saveIndicator');
-    if(el) el.textContent='Saved '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    localStorage.setItem('ahs:workplace-inspection:v3',
+      `{"meta":${JSON.stringify({version:3,savedAt:new Date().toISOString(),appKey:'ahs:workplace-inspection:v3',tenantId:tenant})},"S":${sStr}}`);
+    _localMetaTenant = tenant;
+    if(el && !tenant){ el.textContent = 'Saved on this device '+_hhmm(); el.style.color=''; }
   }catch(e){if(!_quotaWarn){_quotaWarn=true;showToast('Local storage full','error');}}
-  // If signed in, ALSO sync to server (best-effort, async). A failed server
-  // save used to be silent — which made changes appear to "come back" after a
-  // refresh (the server still held the old data). Surface it now.
-  if(Auth.isSignedIn() && Auth.activeTenantId()){
-    Auth.saveToServer(S).then(ok => {
-      const el=document.getElementById('saveIndicator');
-      if(ok){
-        if(el){ el.textContent='Saved to server '+new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); el.style.color=''; }
-        _serverSaveWarned = false;
-      } else {
-        if(el){ el.textContent='⚠ Not saved to server — changes are on this device only'; el.style.color='var(--danger)'; }
-        if(!_serverSaveWarned){
-          _serverSaveWarned = true;
-          showToast('⚠ Could not save to the server — your changes are on this device only and may revert on refresh.','error');
-        }
+  if(!tenant) return;
+  const replace = _forceReplaceNext;
+  if(!replace && sStr === _lastServerStateStr) return;   // server already has this
+  _forceReplaceNext = false;
+  _serverSaving = true;
+  if(el){ el.textContent = 'Saving to server…'; el.style.color=''; }
+  Auth.saveToServer(sStr, replace).then(resp => {
+    _serverSaving = false;
+    if(resp && resp.ok){
+      _lastServerStateStr = sStr;
+      if(resp.updatedAt) _serverUpdatedAt = resp.updatedAt;
+      if(resp.state) _adoptServerState(resp.state);     // other devices' records
+      if(el){ el.textContent = 'Saved to server '+_hhmm(); el.style.color=''; }
+      _serverSaveWarned = false;
+    } else {
+      if(replace) _forceReplaceNext = true;              // retry the reset next save
+      if(el){ el.textContent = '⚠ Not saved to server — on this device only, will retry'; el.style.color='var(--danger)'; }
+      if(!_serverSaveWarned){
+        _serverSaveWarned = true;
+        showToast('⚠ Could not save to the server. Your work is kept on this device and will be sent next time the app saves or opens.','error');
       }
-    });
-  }
+    }
+  });
 }
 let _serverSaveWarned = false;
+
+// Pick up other devices' saves while this tab is open (every minute, and
+// whenever the app comes back to the foreground). Cheap version check first.
+async function _pullServerUpdates(){
+  if(_consultantView || !Auth.isSignedIn() || !Auth.activeTenantId()) return;
+  if(document.visibilityState !== 'visible' || _serverSaving) return;
+  const v = await Auth.serverVersion();
+  if(!v || v === _serverUpdatedAt) return;
+  const full = await Auth.loadFromServerFull();
+  if(!full || !full.state) return;
+  _serverUpdatedAt = full.updatedAt || v;
+  _adoptServerState(full.state);
+}
 
 function loadData(){
   try{
     const emb=document.getElementById('ahs-embedded-data');
-    if(emb?.textContent.trim()){const p=JSON.parse(decodeURIComponent(escape(atob(emb.textContent.trim()))));if(p.S){S=p.S;migrateLoadedState();return;}}
+    if(emb?.textContent.trim()){const p=JSON.parse(decodeURIComponent(escape(atob(emb.textContent.trim()))));if(p.S){S=p.S;migrateLoadedState();_resetRecordFingerprints();return;}}
   }catch(e){}
   try{
     const raw=localStorage.getItem('ahs:workplace-inspection:v3');
-    if(raw){const p=JSON.parse(raw);if(p.S){S=p.S;migrateLoadedState();}}
+    if(raw){const p=JSON.parse(raw);if(p.S){S=p.S;_localMetaTenant=p.meta?.tenantId||null;migrateLoadedState();_resetRecordFingerprints();}}
   }catch(e){}
 }
 
-// Replace the in-memory S with state pulled from the server (used after sign-in).
+// Load the tenant's state from the server (after sign-in / on page load) and
+// MERGE this device's cache into it, so work that never reached the server
+// (phone locked mid-upload, signal dropped) is kept and sent up — it used to
+// be silently replaced by the server copy here.
 async function loadFromServerAndRender(){
-  const serverState = await Auth.loadFromServer();
+  const full = await Auth.loadFromServerFull();
+  const serverState = full && full.state;
   if(serverState && typeof serverState === 'object' && Object.keys(serverState).length){
-    S = serverState;
+    const tenant = Auth.activeTenantId();
+    // Only merge a cache that belongs to this tenant (or an untagged cache on a
+    // client user's own device) — never mix one client's records into another's.
+    const localUsable = _localMetaTenant ? _localMetaTenant === tenant : Auth.user()?.role === 'client_user';
+    let pushUp = false;
+    if(localUsable){
+      const localS = S;
+      const m = mergeAppState(localS, serverState);
+      if(localS.draft) m.state.draft = localS.draft;   // the in-progress draft belongs to this device
+      S = m.state;
+      pushUp = m.fromBase;
+    } else {
+      S = serverState;
+    }
     migrateLoadedState();
-    // Cache locally too
-    try{ localStorage.setItem('ahs:workplace-inspection:v3', JSON.stringify({meta:{version:3,savedAt:new Date().toISOString()},S})); }catch(e){}
+    _resetRecordFingerprints();
+    _serverUpdatedAt    = full.updatedAt || null;
+    _lastServerStateStr = pushUp ? null : JSON.stringify(S);
     _rerenderEverything();
-    showToast('✓ Loaded from server','info');
+    saveData();    // refreshes the local cache; uploads only if this device held unsynced work
+    if(!pushUp){ const el=document.getElementById('saveIndicator'); if(el){ el.textContent='Synced with server '+_hhmm(); el.style.color=''; } }
+    showToast(pushUp ? '✓ Loaded from server — unsynced work from this device is being sent up' : '✓ Loaded from server','info');
     return true;
   }
   // Consultants have no tenant of their own — they dial in to clients via the
@@ -5352,9 +5554,10 @@ async function loadFromServerAndRender(){
   // Server is empty: offer to push local data up (one-time migration)
   if(localStorage.getItem('ahs:workplace-inspection:v3')){
     if(confirm('No data found on the server for your account. Would you like to upload your local data to the server?')){
-      const ok = await Auth.saveToServer(S);
-      if(ok) showToast('✓ Local data uploaded to server','success');
-      else   showToast('Upload failed — keeping local data','error');
+      _stampChangedRecords();
+      const resp = await Auth.saveToServer(JSON.stringify(S), false);
+      if(resp && resp.ok){ _serverUpdatedAt = resp.updatedAt || null; _lastServerStateStr = JSON.stringify(S); showToast('✓ Local data uploaded to server','success'); }
+      else showToast('Upload failed — keeping local data','error');
     }
   }
   return false;
@@ -5430,6 +5633,7 @@ function _updateAuthIndicator(){
   const ind    = document.getElementById('userIndicator');
   const adminNav = document.getElementById('setupNavAdmin');
   const user = Auth.user();
+  _updateResetVisibility();
   if(user){
     if(inBtn)  inBtn.style.display  = 'none';
     if(outBtn) outBtn.style.display = 'inline-flex';
@@ -8084,7 +8288,7 @@ function generatePDF(inspsOverride){
 
       // Step 2: Actioned
       journeyStep(2,'Actioned',
-        a.assignedTo||'No specific assignment recorded at inspection',
+        a.assignedTo?`Assigned to ${a.assignedTo}`:'Not yet assigned by the manager',
         a.dueDate?`Target date: ${fmtDate(a.dueDate)}`:'',
         a.assignedTo?C.warning:C.muted,
         a.assignedTo?C.warningBg:C.mutedBg,
@@ -8889,8 +9093,20 @@ function fmtPeriod(insp){
   if(f&&t) return `${fmtDate(f)} – ${fmtDate(t)}`;
   return fmtDate(t||f);
 }
-function resetAppData(){
-  if(!confirm('⚠️ Reset all app data?\n\nThis will clear all inspections, actions, the audit record, templates and branding — returning the app to its default state.\n\nThis cannot be undone. Continue?')) return;
+async function resetAppData(){
+  if(!_canResetApp()){ showToast('Reset is available to the AHS consultant only.','error'); return; }
+  if(_blockIfReadOnly()) return;
+  if(!confirm('⚠️ Reset all app data?\n\nThis will clear all inspections, actions, the audit record, templates and branding — on this device AND on the server — returning the app to its default state.\n\nThis cannot be undone. Continue?')) return;
+  // Mark every existing record deleted — this device's and the server's — so
+  // another device still holding them can't merge them back after the wipe.
+  const tomb = { inspections:{}, actions:{} };
+  const stampNow = serverNow().getTime();
+  const addIds = st => _REC_KEYS.forEach(k => (st?.[k] || []).forEach(r => { if(r && r.id) tomb[k][r.id] = stampNow; }));
+  addIds(S);
+  if(Auth.isSignedIn() && Auth.activeTenantId()){
+    const full = await Auth.loadFromServerFull();
+    addIds(full?.state);
+  }
   try{ localStorage.removeItem('ahs:workplace-inspection:v3'); } catch(e){}
   _consultantUnlocked = false; // re-lock on reset
   // Re-initialise state to defaults
@@ -8903,7 +9119,8 @@ function resetAppData(){
     audit:       {},
     templates:   [],
     activeClient: null,
-    branding:    { name:'AHS Compliance Consulting', tagline:'Health & Safety Consultancy', website:'', phone:'', email:'', primary:'#757575', accent:'#4BBFD6', textColor:'#3a3a3a', logoB64:'', logoName:'' }
+    branding:    { name:'AHS Compliance Consulting', tagline:'Health & Safety Consultancy', website:'', phone:'', email:'', primary:'#757575', accent:'#4BBFD6', textColor:'#3a3a3a', logoB64:'', logoName:'' },
+    _deleted:    tomb
   };
 
   // ── Explicitly clear all known form fields ──
@@ -8942,7 +9159,12 @@ function resetAppData(){
   populateBrandingForm();
   populateReportLocationFilter();
   renderMonthlyReport();
+  // Server saves normally MERGE records (so one device can't wipe another's
+  // inspections). A reset is the one deliberate wipe, so force a full replace.
+  _forceReplaceNext = true;
+  _resetRecordFingerprints();
   saveData();
+  _updateResetVisibility();
   showToast('✓ App reset — all fields cleared, fresh slate', 'info');
 }
 
@@ -9015,41 +9237,58 @@ const Auth = (() => {
   function activeTenantId(){ return _activeTenantId; }
   function setActiveTenant(id){ _activeTenantId = id; }
 
-  async function loadFromServer(){
+  // Returns { state, updatedAt } (state may be null if the server has none yet),
+  // or null if not signed in / the request failed.
+  async function loadFromServerFull(){
     if(!_currentUser) return null;
     const tenantId = _activeTenantId;
     if(!tenantId) return null;        // consultant hasn't picked a tenant yet
     try {
       const r = await _api(`/api/state?tenantId=${encodeURIComponent(tenantId)}`);
-      return r.state; // may be null if server has no state yet
+      return { state: r.state, updatedAt: r.updatedAt || null };
     } catch(e){
       console.warn('Failed to load state from server:', e);
       return null;
     }
   }
+  async function loadFromServer(){
+    const r = await loadFromServerFull();
+    return r ? r.state : null;
+  }
 
-  async function saveToServer(state){
-    if(!_currentUser) return false;
+  // Cheap "has anything changed?" check — returns the server's updatedAt only.
+  async function serverVersion(){
+    if(!_currentUser || !_activeTenantId) return null;
+    try {
+      const r = await _api(`/api/state/version?tenantId=${encodeURIComponent(_activeTenantId)}`);
+      return r.updatedAt || null;
+    } catch(e){ return null; }
+  }
+
+  // stateStr is the already-serialised S (saves re-stringifying a large blob).
+  // replace=false → the server MERGES records by id with what it holds.
+  // Resolves to the server's reply ({ ok, updatedAt, state? }) or null on failure.
+  async function saveToServer(stateStr, replace){
+    if(!_currentUser) return null;
     const tenantId = _activeTenantId;
-    if(!tenantId) return false;
-    // Debounce concurrent saves
+    if(!tenantId) return null;
+    // Serialise saves: wait for any in-flight one to finish first
     if(_syncInFlight) await _syncInFlight.catch(()=>{});
     _syncInFlight = _api('/api/state', {
       method: 'POST',
-      body: JSON.stringify({ tenantId, state })
+      body: `{"tenantId":${JSON.stringify(tenantId)},"replace":${replace?'true':'false'},"state":${stateStr}}`
     });
     try {
-      await _syncInFlight;
-      return true;
+      return await _syncInFlight;
     } catch(e){
       console.warn('Failed to save state to server:', e);
-      return false;
+      return null;
     } finally {
       _syncInFlight = null;
     }
   }
 
-  return { login, logout, refresh, user, isSignedIn, activeTenantId, setActiveTenant, loadFromServer, saveToServer };
+  return { login, logout, refresh, user, isSignedIn, activeTenantId, setActiveTenant, loadFromServer, loadFromServerFull, serverVersion, saveToServer };
 })();
 
 // ══════════════════════════════════════════════════════════════
