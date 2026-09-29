@@ -1961,6 +1961,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // PDF save folder picker has been removed — downloads go straight to the
   // browser's Downloads folder now. restorePersistedSaveFolder() is no longer called.
   setInterval(saveData, 30000);
+  // Shrink any photos saved at the old, larger size (once per record, in the background).
+  setTimeout(_slimStoredPhotos, 4000);
   // Keep the server-clock offset fresh on long-open sessions so stamps don't drift.
   setInterval(syncServerTime, 5 * 60 * 1000);
   // Pick up records saved from other devices (manager's tab sees new actions,
@@ -3216,6 +3218,10 @@ function submitInspection() {
     });
   });
 
+  // Each before-photo now lives on its action only; the inspection keeps a
+  // count (all it uses them for is the PDF's [photo] marker), so a photo isn't
+  // stored — and uploaded on every save — twice.
+  _dedupeInspectionPhotos(insp);
   S.inspections.push(insp);
   // Single-date model: the next draft keeps the submitted date (no period
   // auto-advance). The Date field still defaults to today for a fresh app.
@@ -3425,7 +3431,7 @@ function loadLastInspection() {
     S.checklist = [];
   } else {
     S.draft={typeId:last.typeId||S.draft?.typeId||'garage_inspection',
-      results:{...last.results},notes:{...last.notes},actionDetails:{...last.actionDetails},
+      results:{...last.results},notes:{...last.notes},actionDetails:_rehydrateActionDetails(last),
       rectifyDetails:{...(last.rectifyDetails||{})}, formData:{},
       periodFrom:last.periodFrom,periodTo:last.periodTo,manager:last.manager,location:last.location,
       ref:last.ref||'',freq:last.freq||'weekly',generalNotes:last.generalNotes||'',
@@ -5426,6 +5432,7 @@ function _adoptServerState(serverState){
   try{ localStorage.setItem('ahs:workplace-inspection:v3',
     `{"meta":${JSON.stringify({version:3,savedAt:new Date().toISOString(),appKey:'ahs:workplace-inspection:v3',tenantId:Auth.activeTenantId()||null})},"S":${JSON.stringify(S)}}`); }catch(e){}
   _refreshRecordViews();
+  setTimeout(_slimStoredPhotos, 2000);   // records from a device on an older app version
   return true;
 }
 
@@ -8065,7 +8072,8 @@ function generatePDF(inspsOverride){
           // Indicator suffixes — plain ASCII, since the emoji glyphs aren't
           // in helvetica either.
           const hasNote   = !!(insp.notes?.[item.id]?.trim());
-          const hasPhotos = !!(insp.actionDetails?.[item.id]?.beforePhotos?.length);
+          const adP = insp.actionDetails?.[item.id];
+          const hasPhotos = !!(adP?.beforePhotos?.length || adP?.photoCount);
           const indicators = (hasNote ? '  [note]' : '') + (hasPhotos ? '  [photo]' : '');
 
           // Wrap the item name to fit (leaving room for icon + right label)
@@ -8527,8 +8535,15 @@ function renderPhotoThumbs(photos, type, id) {
     </div>`).join('');
 }
 
+// Photo size: every photo lives inside the saved state and travels with every
+// server save, so keep them lean. 1024px long edge @ JPEG 0.6 ≈ 210 KB — half
+// the old 1200px @ 0.82 (≈ 450 KB) and indistinguishable at phone/lightbox/PDF
+// viewing sizes (checked on real site photos 2026-09-29).
+const PHOTO_MAX_PX  = 1024;
+const PHOTO_QUALITY = 0.6;
+
 function compressPhoto(file, callback) {
-  const MAX = 1200;
+  const MAX = PHOTO_MAX_PX;
   const reader = new FileReader();
   reader.onload = ev => {
     const img = new Image();
@@ -8539,12 +8554,109 @@ function compressPhoto(file, callback) {
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      callback(canvas.toDataURL('image/jpeg', 0.82));
+      callback(canvas.toDataURL('image/jpeg', PHOTO_QUALITY));
     };
     img.onerror = () => showToast('Could not read image', 'error');
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+// ── Store each photo once ────────────────────────────────────────
+// On submit a before-photo used to be kept on the inspection AND on its
+// action. The action's copy is the one shown and printed; the inspection's is
+// only ever checked for the PDF's [photo] marker. Keep a count instead.
+// Only items whose photos are safely on an action are slimmed.
+function _dedupeInspectionPhotos(insp){
+  const ad = insp.actionDetails;
+  if(!ad || typeof ad !== 'object') return false;
+  let changed = false;
+  const out = {};
+  Object.keys(ad).forEach(itemId => {
+    const v = ad[itemId];
+    const n = v?.beforePhotos?.length || 0;
+    const onAction = n && S.actions.some(a => a.inspId === insp.id && a.itemId === itemId && (a.beforePhotos?.length || 0) >= n);
+    if(onAction){ out[itemId] = { ...v, beforePhotos: [], photoCount: n }; changed = true; }
+    else out[itemId] = v;
+  });
+  if(changed) insp.actionDetails = out;
+  return changed;
+}
+// Rebuild an inspection's action details with the photos fetched back from its
+// actions (for "Load Previous", which re-opens the last inspection as a draft).
+function _rehydrateActionDetails(insp){
+  const out = {};
+  Object.entries(insp.actionDetails || {}).forEach(([itemId, v]) => {
+    const act = S.actions.find(a => a.inspId === insp.id && a.itemId === itemId);
+    const photos = v?.beforePhotos?.length ? v.beforePhotos : (act?.beforePhotos || []);
+    const { photoCount, ...rest } = v || {};
+    out[itemId] = { ...rest, beforePhotos: photos.slice() };
+  });
+  return out;
+}
+
+// ── One-off slimming of photos saved before 2026-09-29 ───────────
+// Re-saves any photo larger than PHOTO_MAX_PX at the current setting, and
+// removes duplicated before-photos. Each record is flagged _slim once done so
+// it's never decoded again. Runs quietly in the background after load, one
+// photo at a time, and never replaces a photo that changed meanwhile.
+function _shrinkDataUrl(url){
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const big = Math.max(img.width, img.height);
+      if(big <= PHOTO_MAX_PX) return resolve(null);            // already small
+      const s = PHOTO_MAX_PX / big;
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const out = c.toDataURL('image/jpeg', PHOTO_QUALITY);
+      resolve(out.length < url.length ? out : null);
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+// Visit every JPEG data-URL string held (directly, or in arrays/objects) under
+// a record; calls fn(holder, key, value) so the caller can swap it in place.
+function _eachPhotoSlot(obj, fn, depth){
+  if(!obj || typeof obj !== 'object' || (depth||0) > 6) return;
+  Object.keys(obj).forEach(k => {
+    const v = obj[k];
+    if(typeof v === 'string'){ if(v.startsWith('data:image/jpeg;base64,')) fn(obj, k, v); }
+    else if(v && typeof v === 'object') _eachPhotoSlot(v, fn, (depth||0) + 1);
+  });
+}
+let _slimRunning = false;
+async function _slimStoredPhotos(){
+  if(_slimRunning || _consultantView) return;
+  _slimRunning = true;
+  let changed = 0, before = 0, after = 0;
+  try {
+    const recs = [...(S.inspections||[]), ...(S.actions||[])].filter(r => r && !r._slim);
+    // Draft photos (an inspection in progress) are checked too, without a flag.
+    for(const rec of [...recs, S.draft]){
+      if(!rec) continue;
+      if(rec !== S.draft && (S.inspections||[]).includes(rec) && _dedupeInspectionPhotos(rec)) changed++;
+      const slots = [];
+      _eachPhotoSlot(rec, (holder, key, val) => slots.push({ holder, key, val }));
+      for(const s of slots){
+        if(s.val.length < 150000) continue;                  // small enough already
+        const small = await _shrinkDataUrl(s.val);
+        if(small && s.holder[s.key] === s.val){               // unchanged meanwhile
+          before += s.val.length; after += small.length;
+          s.holder[s.key] = small; changed++;
+        }
+        await new Promise(r => setTimeout(r, 0));             // keep the page responsive
+      }
+      if(rec !== S.draft) rec._slim = 1;
+    }
+  } catch(e){ console.warn('Photo slimming stopped:', e); }
+  _slimRunning = false;
+  if(changed){
+    saveData();
+    if(before) console.info(`Photos slimmed: ${Math.round(before/1024)} KB → ${Math.round(after/1024)} KB`);
+  }
 }
 
 // Called from the inspection checklist action panel — adds a "before" photo to draft actionDetails
