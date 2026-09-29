@@ -177,6 +177,11 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 .ac-meta{font-size:12px;color:var(--text-muted);display:flex;flex-wrap:wrap;gap:8px;margin-top:3px;}
 .resolve-panel{margin-top:12px;padding:14px;background:var(--success-bg);border:1.5px solid var(--success-brd);border-radius:8px;}
 .rp-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--success);margin-bottom:10px;}
+.assign-panel{margin-top:12px;padding:14px;background:var(--accent-light);border:1.5px solid var(--accent);border-radius:8px;}
+.ap-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent-dark);margin-bottom:10px;}
+.action-card.assigned{border-left-color:var(--accent);}
+.assigned-line{font-size:13px;margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.reassign-btn{font-size:11px;font-weight:600;color:var(--accent-dark);background:transparent;border:1px solid var(--accent);border-radius:5px;padding:3px 8px;cursor:pointer;}
 
 /* Journey trail */
 .journey-item{padding:18px 0;border-bottom:1px solid var(--border);}
@@ -3111,7 +3116,7 @@ function submitInspection() {
       manager:d.manager, location:d.location,
       ref:'', freq:d.freq, generalNotes:'', title:'', inspType:''
     };
-    saveData(); updateBadge(); showToast(`✓ ${activeType.name} submitted — manager will be notified`);
+    saveData(); updateBadge(); showToast(`✓ ${activeType.name} submitted for review`);
     populateInspectionForm(); setTimeout(renderActiveInspectionBody, 300);
     return insp;
   }
@@ -3183,7 +3188,11 @@ function submitInspection() {
   // Single-date model: the next draft keeps the submitted date (no period
   // auto-advance). The Date field still defaults to today for a fresh app.
   S.draft={typeId:d.typeId,results:{},notes:{},actionDetails:{},rectifyDetails:{},formData:{},periodFrom:d.periodFrom,periodTo:d.periodTo,manager:d.manager,location:d.location,ref:'',freq:d.freq,generalNotes:'',title:d.title||'',inspType:''};
-  saveData(); updateBadge(); showToast('✓ Submitted — manager will be notified');
+  const nAct=S.actions.filter(a=>a.inspId===insp.id).length;
+  saveData(); updateBadge();
+  showToast(nAct
+    ? `✓ Submitted — ${nAct} action${nAct>1?'s':''} waiting in the Actions tab to assign`
+    : '✓ Submitted — no actions raised','success');
   populateInspectionForm(); setTimeout(renderActiveInspectionBody,300);
   return insp;
 }
@@ -3404,13 +3413,25 @@ function loadLastInspection() {
 // ══════════════════════════════════════════════════════════════
 //  ACTIONS TAB
 // ══════════════════════════════════════════════════════════════
+// Lifecycle state of an action, derived (no migration needed):
+//   raised    → issue logged, nobody assigned yet  (manager's queue)
+//   assigned  → a person + optional due date set    (out for fixing)
+//   resolved  → fixed and signed off by the fixer
+function actionStatus(a){
+  if(a.resolved) return 'resolved';
+  if(a.assignedTo && String(a.assignedTo).trim()) return 'assigned';
+  return 'raised';
+}
 function renderActions() {
   const cont=document.getElementById('actionsContainer');
   const showRes=document.getElementById('showResolved')?.checked;
   const today=new Date(); today.setHours(0,0,0,0);
   let list=showRes?[...S.actions]:S.actions.filter(a=>!a.resolved);
+  // Manager's queue order: needs-assigning first, then in-progress, then resolved.
+  const _rank={raised:0,assigned:1,resolved:2};
   list.sort((a,b)=>{
-    if(a.resolved!==b.resolved) return a.resolved?1:-1;
+    const ra=_rank[actionStatus(a)], rb=_rank[actionStatus(b)];
+    if(ra!==rb) return ra-rb;
     if(a.dueDate&&b.dueDate) return new Date(a.dueDate)-new Date(b.dueDate);
     return a.dueDate?-1:b.dueDate?1:0;
   });
@@ -3420,15 +3441,16 @@ function renderActions() {
   }
   cont.innerHTML='';
   list.forEach(a=>{
+    const st=actionStatus(a);
     const overdue=!a.resolved&&a.dueDate&&new Date(a.dueDate)<today;
     const div=document.createElement('div');
-    div.className=`action-card${a.resolved?' resolved':overdue?' overdue':''}`;
+    div.className=`action-card${a.resolved?' resolved':overdue?' overdue':st==='assigned'?' assigned':''}`;
     div.innerHTML=`
       <div class="ac-top">
         <div style="flex:1">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="ac-title">${esc(a.itemName)}</span>
-            ${a.resolved?`<span class="badge badge-success">✓ Resolved</span>`:overdue?`<span class="badge badge-danger">Overdue</span>`:`<span class="badge badge-warning">Open</span>`}
+            ${a.resolved?`<span class="badge badge-success">✓ Resolved</span>`:overdue?`<span class="badge badge-danger">Overdue</span>`:st==='assigned'?`<span class="badge badge-accent">Assigned</span>`:`<span class="badge badge-warning">Needs assigning</span>`}
           </div>
           <div class="ac-meta">
             <span>📍 ${esc(a.location)}</span><span>📅 ${fmtDate(a.periodTo)}</span>
@@ -3440,8 +3462,7 @@ function renderActions() {
         <button class="no-print" onclick="deleteAction('${a.id}')" title="Remove this action item"
           style="background:transparent;border:1px solid var(--danger-brd);color:var(--danger);width:28px;height:28px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;flex-shrink:0;align-self:flex-start;">✕</button>
       </div>
-      <div style="font-size:13px;margin-bottom:${a.assignedTo?'6px':'0'};"><strong>Issue:</strong> ${esc(a.issue)}</div>
-      ${a.assignedTo?`<div style="font-size:13px;color:var(--text-muted);"><strong>Assigned:</strong> ${esc(a.assignedTo)}</div>`:''}
+      <div style="font-size:13px;"><strong>Issue:</strong> ${esc(a.issue)}</div>
       ${a.note?`<div style="font-size:13px;color:var(--info);margin-top:6px;padding:8px 10px;background:var(--info-bg);border:1px solid var(--info-brd);border-radius:6px;">💬 ${esc(a.note)}</div>`:''}
       ${(a.beforePhotos&&a.beforePhotos.length)||(a.afterPhotos&&a.afterPhotos.length)?`
         <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;">
@@ -3454,9 +3475,34 @@ function renderActions() {
             <div style="display:flex;gap:6px;flex-wrap:wrap;">${a.afterPhotos.map((p,pi)=>`<img class="photo-thumb" src="${p}" onclick="openLightbox('${p}','After — ${esc(a.itemName)}')" alt="After photo ${pi+1}">`).join('')}</div>
           </div>`:''}
         </div>`:''}
-      ${!a.resolved?`
+      ${a.resolved?`
+        <div style="margin-top:10px;padding:10px 12px;background:var(--success-bg);border:1px solid var(--success-brd);border-radius:7px;font-size:13px;color:var(--success);">
+          <strong>Resolution:</strong> ${esc(a.resolvedNote||'(no notes recorded)')}
+        </div>`:st==='raised'?`
+        <div class="assign-panel">
+          <div class="ap-label">① Assign — manager step</div>
+          <div class="field-grid" style="margin-bottom:10px;">
+            <div class="field-group"><label class="field-label">Assign to</label><input type="text" id="asg-${a.id}" placeholder="Name of person responsible" value="${esc(a.assignedTo||'')}"></div>
+            <div class="field-group"><label class="field-label">Due date</label><input type="date" id="asgd-${a.id}" value="${esc(a.dueDate||'')}"></div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="assignAction('${a.id}')">→ Assign</button>
+        </div>`:`
+        <div class="assigned-line">
+          <span>👤 <strong>Assigned to:</strong> ${esc(a.assignedTo)}${a.dueDate?` · Due ${fmtDate(a.dueDate)}`:''}</span>
+          <button class="reassign-btn no-print" onclick="toggleReassign('${a.id}')">↻ Reassign</button>
+        </div>
+        <div id="reassign-${a.id}" style="display:none;">
+          <div class="assign-panel">
+            <div class="ap-label">↻ Update assignment</div>
+            <div class="field-grid" style="margin-bottom:10px;">
+              <div class="field-group"><label class="field-label">Assign to</label><input type="text" id="asg-${a.id}" placeholder="Name of person responsible" value="${esc(a.assignedTo||'')}"></div>
+              <div class="field-group"><label class="field-label">Due date</label><input type="date" id="asgd-${a.id}" value="${esc(a.dueDate||'')}"></div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="assignAction('${a.id}')">↻ Update</button>
+          </div>
+        </div>
         <div class="resolve-panel">
-          <div class="rp-label">✓ Mark as Resolved</div>
+          <div class="rp-label">✓ Mark as Resolved — assignee step</div>
           <div class="field-grid" style="margin-bottom:10px;">
             <div class="field-group"><label class="field-label">Resolved by</label><input type="text" id="rb-${a.id}" placeholder="Name" value="${esc(a.resolvedBy||'')}"></div>
             <div class="field-group"><label class="field-label">Date resolved</label><input type="date" id="rd-${a.id}" value="${new Date().toISOString().split('T')[0]}"></div>
@@ -3473,9 +3519,6 @@ function renderActions() {
             </div>
           </div>
           <button class="btn btn-success btn-sm" onclick="resolveAction('${a.id}')">✓ Confirm Resolution</button>
-        </div>`:`
-        <div style="margin-top:10px;padding:10px 12px;background:var(--success-bg);border:1px solid var(--success-brd);border-radius:7px;font-size:13px;color:var(--success);">
-          <strong>Resolution:</strong> ${esc(a.resolvedNote||'(no notes recorded)')}
         </div>`}`;
     cont.appendChild(div);
   });
@@ -3538,6 +3581,30 @@ function resolveAction(id){
   }
 }
 
+// Manager assigns (or reassigns) an open action to a named person + due date.
+// This is the middle relay step: raised → assigned. Setting assignedTo lights
+// the "Actioned" dot on the journey trail and moves the card out of the
+// "needs assigning" queue. In-app only — the assignee sees it in the Actions
+// tab; no email is sent.
+function assignAction(id){
+  if(_blockIfReadOnly()) return;
+  const a=S.actions.find(x=>x.id===id); if(!a) return;
+  const who=document.getElementById('asg-'+id)?.value.trim();
+  const due=document.getElementById('asgd-'+id)?.value||'';
+  if(!who){ showToast('Enter who this action is assigned to.','error'); return; }
+  a.assignedTo=who; a.dueDate=due;
+  saveData(); updateBadge();
+  showToast('→ Assigned to '+who);
+  renderActions(); renderActionStats();
+  if(typeof renderMonthlyReport==='function'){ try{ renderMonthlyReport(); }catch(e){} }
+}
+
+// Reveal/hide the inline reassignment panel on an already-assigned card.
+function toggleReassign(id){
+  const el=document.getElementById('reassign-'+id);
+  if(el) el.style.display = (el.style.display==='none') ? '' : 'none';
+}
+
 // ── Inspection-level sign-off ─────────────────────────────────
 // An inspection is only fully complete when the manager has signed it
 // off. Until then, even with all actions resolved, it stays 'open'.
@@ -3595,12 +3662,14 @@ function reopenInspection(inspId){
 }
 
 function renderActionStats(){
-  const total=S.actions.length; const resolved=S.actions.filter(a=>a.resolved).length;
-  const open=total-resolved; const today=new Date(); today.setHours(0,0,0,0);
+  const today=new Date(); today.setHours(0,0,0,0);
+  const needsAssign=S.actions.filter(a=>actionStatus(a)==='raised').length;
+  const inProgress=S.actions.filter(a=>actionStatus(a)==='assigned').length;
+  const resolved=S.actions.filter(a=>a.resolved).length;
   const overdue=S.actions.filter(a=>!a.resolved&&a.dueDate&&new Date(a.dueDate)<today).length;
   document.getElementById('actionStats').innerHTML=`
-    <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-lbl">Total</div></div>
-    <div class="stat-card"><div class="stat-num" style="color:var(--warning)">${open}</div><div class="stat-lbl">Open</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:var(--warning)">${needsAssign}</div><div class="stat-lbl">Needs assigning</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:var(--accent-dark)">${inProgress}</div><div class="stat-lbl">In progress</div></div>
     <div class="stat-card"><div class="stat-num" style="color:var(--success)">${resolved}</div><div class="stat-lbl">Resolved</div></div>
     <div class="stat-card"><div class="stat-num" style="color:var(--danger)">${overdue}</div><div class="stat-lbl">Overdue</div></div>`;
 }
