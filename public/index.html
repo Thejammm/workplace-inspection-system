@@ -484,7 +484,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 </div>
 
 <!-- Drill-down modal -->
-<div class="drilldown-bg" id="drilldownBg" onclick="if(event.target===this)closeDrilldown()">
+<div class="drilldown-bg" id="drilldownBg" onmousedown="this._downSelf=(event.target===this)" onmouseup="if(event.target!==this)this._downSelf=false" onclick="if(this._downSelf&&event.target===this)closeDrilldown();this._downSelf=false;">
   <div class="drilldown-modal">
     <div class="drilldown-header">
       <div class="drilldown-title" id="drilldownTitle"></div>
@@ -5028,7 +5028,17 @@ function openModal(title,bodyHtml,actionsHtml){
   setTimeout(()=>document.querySelector('#modalBody input, #modalBody textarea')?.focus(),50);
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');}
-document.getElementById('modal').addEventListener('click',e=>{if(e.target===document.getElementById('modal'))closeModal();});
+// A pop-up closes on a click outside it ONLY when the press AND the release were both
+// outside. Selecting text by dragging past the edge of the box also fires a click on
+// the backdrop, which closed the box under the user's hands and lost what they had typed.
+// Every pop-up uses this guard; never write a bare click-to-close backdrop.
+function _backdropClose(ov, fn){
+  if(!ov) return;
+  ov.addEventListener('mousedown', function(e){ ov._downSelf = (e.target === ov); }, true);
+  ov.addEventListener('mouseup', function(e){ if(e.target !== ov) ov._downSelf = false; }, true);
+  ov.addEventListener('click', function(e){ if(ov._downSelf && e.target === ov) fn(); ov._downSelf = false; });
+}
+_backdropClose(document.getElementById('modal'), ()=>closeModal());
 
 // ══════════════════════════════════════════════════════════════
 //  BRANDING
@@ -6482,7 +6492,7 @@ function setReportStatusFilter(value){
 // Close login modal on background click
 document.addEventListener('DOMContentLoaded', () => {
   const lm = document.getElementById('loginModal');
-  if(lm) lm.addEventListener('click', e => { if(e.target === lm) closeLoginModal(); });
+  _backdropClose(lm, ()=>closeLoginModal());
 });
 
 // Migrate loaded state from older save formats. Idempotent — safe to call on already-current state.
